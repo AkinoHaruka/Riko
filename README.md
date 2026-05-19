@@ -8,16 +8,17 @@
 
 ## 平台支持
 
-- **Android**: APK 直接安装
-- **Windows / macOS / Linux**: 桌面端（Flutter 构建）
-- **iOS / Web**: 计划中
+| 平台 | 状态 |
+|------|------|
+| **Android** | 已验证，APK 直接安装 |
+| **Windows** | 已验证，桌面端 |
+| macOS / Linux / iOS / Web | 未验证 |
 
 ## 技术栈
 
 - 前端: Flutter 3.x (Dart)
 - 后端: Fastify 5 + TypeScript
 - AI: DeepSeek (deepseek-v4-flash / deepseek-v4-pro)
-- 数据库: SQLite (better-sqlite3 / sql.js)
 
 ## 构建
 
