@@ -1,0 +1,14 @@
+node_modules/
+dist/
+logs/
+.env
+*.db
+*.log
+
+# Runtime data (prompts are tracked as source)
+data/app.db*
+data/memories/
+data/system_prompts*/
+data/test_memories_e2e/
+data/db_init.txt
+db_init.txt

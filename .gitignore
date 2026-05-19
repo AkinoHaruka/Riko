@@ -1,0 +1,70 @@
+# Android signing
+/android/key.properties
+/android/app/upload-keystore.jks
+
+# Build output
+/build/
+/ts_backend/dist/
+/ts_backend/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Flutter
+.dart_tool/
+.metadata
+.packages
+
+# Large assets (download with scripts)
+/android/app/src/main/assets/rootfs/
+/android/app/src/main/assets/backend/node_modules.tar.gz
+/android/app/src/main/assets/backend/dist/
+/android/app/src/main/assets/backend/node_modules/
+
+# proot .so binaries (download with scripts/fetch-proot-binaries.py)
+/android/app/src/main/jniLibs/**/libproot.so
+/android/app/src/main/jniLibs/**/libprootloader.so
+/android/app/src/main/jniLibs/**/libprootloader32.so
+/android/app/src/main/jniLibs/**/libtalloc.so
+
+# Environment
+.env
+.env.*
+
+# Temp
+.tmp-proot/
+
+# Export files
+*.riko
+
+# Runtime database
+/ts_backend/data/app.db*
+
+# Runtime data directories
+/ts_backend/data/memories/
+/ts_backend/data/system_prompts*/
+/ts_backend/data/test_memories_e2e/
+/ts_backend/data/db_init.txt
+/ts_backend/db_init.txt
+
+# Logs
+/ts_backend/logs/
+
+# Temp files
+tmp_*.json
+
+# Dev docs (not for distribution)
+/doc/
+/ts_backend/doccc/
+ANDROID_PORT_PLAN.md
+SESSION_CONTEXT.md
+
+# Claude Code internal
+.claude/
+.trae/
