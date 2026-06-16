@@ -59,7 +59,7 @@ lib/
 ├── core/
 │   ├── router.dart            # GoRouter: / → /settings, /archive, /memory, /admin
 │   ├── di/
-│   │   ├── providers.dart     # Global Riverpod providers (apiClient, database, repositories, auth, panelRatio, WebSocket)
+│   │   ├── providers.dart     # Global Riverpod providers (apiClient, database, repositories, panelRatio, WebSocket)
 │   │   ├── chat_provider.dart # ChatNotifier: SSE streaming, optimistic UI, monitor records, sub-agent activity
 │   │   ├── settings_cache.dart# SettingsCacheState — mirrors backend settings into Flutter
 │   │   ├── dream_notifier.dart
@@ -85,7 +85,6 @@ lib/
 ├── ui/
 │   ├── app_shell.dart         # Desktop: frameless window with custom title bar + resize handles
 │   ├── chat_home_page.dart    # Main chat view: message list, input bar, split-pane terminal + monitor panel
-│   ├── login_page.dart / register_page.dart
 │   ├── settings_page.dart / memory_page.dart / archive_page.dart / admin_page.dart / monitor_page.dart
 │   └── widgets/               # message_bubble, modern_input_bar, conversation_drawer, draggable_splitter,
 │                              #   terminal_panel, sub_agent_trigger_panel, dynamic_island, desktop_title_bar
@@ -104,6 +103,8 @@ src/
 ├── core/
 │   ├── ai/                    # OpenAI SDK client wrapper for DeepSeek, error classification
 │   ├── events/                # EventManager — typed SSE/WS event dispatch (conversation_created, message_updated, etc.)
+│   ├── security/              # Unicode sanitization, threat pattern scanning, tool call guardrails
+│   ├── types/                 # Shared type definitions (ToolHandler, ToolContext, ToolCallResult)
 │   ├── middleware/             # CORS, rate-limit, gzip, auth (JWT), request logging
 │   ├── encryption/            # AES crypto
 │   ├── validation/            # Frontmatter parsing
@@ -112,13 +113,15 @@ src/
 │   ├── auth/                  # JWT service, bcrypt
 │   ├── conversation/          # CRUD service + repository
 │   ├── message/               # CRUD service + repository
-│   ├── memory/                # Memory service + repository (vector search via AI)
+│   ├── memory/                # Memory service + repository + FTS5 full-text search
 │   ├── setting/               # Settings CRUD
-│   ├── chat/                  # Chat orchestration: SSE streaming, tool calling handler
+│   ├── chat/                  # Chat orchestration: SSE streaming, tool calling handler, Unicode sanitization
 │   ├── compact/               # Auto/manual context compaction (token estimation + micro-compact + trigger)
 │   ├── sessionMemory/         # Session notes extraction via AI
 │   ├── subAgent/              # Sub-agent prompt building and execution
-│   └── autoDream/             # Background dream/consolidation task scheduler
+│   ├── autoDream/             # Background dream/consolidation task scheduler + threat scanning on write
+│   ├── skill/                 # Skill discovery and loading (SKILL.md frontmatter parsing)
+│   └── mcp/                   # MCP client manager (Stdio/HTTP transport, tool discovery, dynamic registration)
 ├── api/
 │   ├── routes.ts              # Central route registration
 │   ├── chat/                  # POST /chat/completions (SSE streaming)
@@ -131,8 +134,11 @@ src/
 │   ├── dream/                 # /dream
 │   ├── events/                # WebSocket /ws/events
 │   ├── monitor/               # /monitor/*
+│   ├── mcp/                   # /mcp/servers (MCP Server CRUD + reconnect)
 │   └── tool/                  # /tool/*
 ├── tools/                     # File-system tools: readFile, writeFile, editFile, grep, findFiles, listFiles, etc.
+│                              #   + memorySearch (FTS5 + file scan hybrid), skillsList, skillView
+│                              #   + MCP tools (dynamically registered, mcp__ prefix)
 └── prompts/                   # Prompt templates and migrator
 ```
 
@@ -159,3 +165,13 @@ Conditional imports in `database.dart`:
 - **Optimistic UI with SSE**: User messages appear instantly (negative IDs), then sync when the SSE push arrives.
 - **Deferred loading**: Settings, Archive, Memory, Admin pages use `deferred as` imports for smaller initial load.
 - **Single dark theme**: No light mode — dark theme with green accent (#3eb573) and MiSans font family.
+- **Single-user, no auth**: This is a personal local app. Do NOT add login, registration, or authentication pages/guards. The API token is obtained automatically via `/auth/bootstrap` on first launch. There is no `authProvider`, `AuthState`, or `AuthNotifier` in the frontend.
+
+### New Modules (2026-06)
+
+- **Security (core/security/)**: Three-layer defense — `sanitizeUnicode` (NFKC + invisible char removal on user input), `threatPatterns` (7 threat categories, 3 scope levels, used in dream write scanning), `toolGuardrails` (exact-repeat/same-tool/idle detection, block/warn/halt responses)
+- **FTS5 Search (domain/memory/)**: SQLite FTS5 virtual table with Unicode61 tokenizer, BM25 ranking, relative score floor (0.3), snippet highlighting, hybrid search (FTS5 + file scan)
+- **Skill System (domain/skill/)**: SKILL.md frontmatter-based skill definitions, `data/skills/bundled/` for built-in skills, `SkillsList`/`SkillView` tools for progressive disclosure
+- **MCP Client (domain/mcp/)**: Stdio/HTTP transport, auto tool discovery → `toolRegistry` registration, `mcp__` prefix namespace, REST API for server management, graceful shutdown with SIGKILL fallback
+- **Emotions Memory**: `emotions/` memory type in dream consolidation, emotion-oriented prompt guidance in `dream_prompt.md`
+- **EventBus Events**: `mcp:server:connected/disconnected/error`, `mcp:tool:called`, `skill:loaded/error`, `security:threat:detected`, `security:guardrail:blocked`

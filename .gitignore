@@ -48,10 +48,12 @@ Thumbs.db
 
 # Runtime data directories
 /ts_backend/data/memories/
+/ts_backend/data/emotions/
 /ts_backend/data/system_prompts*/
 /ts_backend/data/test_memories_e2e/
 /ts_backend/data/db_init.txt
 /ts_backend/db_init.txt
+/ts_backend/data/mcp_servers.json
 
 # Logs
 /ts_backend/logs/
@@ -64,6 +66,13 @@ tmp_*.json
 /ts_backend/doccc/
 ANDROID_PORT_PLAN.md
 SESSION_CONTEXT.md
+
+# Internal reports
+ANALYSIS_REPORT.md
+REFACTORING_REPORT.md
+SPEC_TEST_COMPLETION.md
+SPEC_TEST_ENGINEERING.md
+ts_backend/DESIGN.md
 
 # Claude Code internal
 .claude/
