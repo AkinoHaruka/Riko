@@ -1,3 +1,10 @@
+/// 代理列表页面 — 主代理与子代理的对话入口
+///
+/// 展示主代理、记忆提取、上下文压缩、梦境整理四种代理的对话列表，
+/// 底部导航栏支持在消息、文件、设置三个标签间切换。
+/// 首次进入时自动跳转到聊天页面。
+library;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -6,7 +13,12 @@ import 'package:go_router/go_router.dart';
 
 import '../core/di/chat_provider.dart';
 import '../core/di/providers.dart';
+import '../core/theme/app_animations.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/app_radius.dart';
+import '../core/theme/app_spacing.dart';
+import '../core/theme/app_typography.dart';
+import '../core/utils/time_formatters.dart';
 import '../data/models/chat_message.dart';
 import 'settings_page.dart' deferred as settings_page;
 import 'widgets/avatar/avatar_provider.dart';
@@ -40,15 +52,19 @@ class _AgentListPageState extends ConsumerState<AgentListPage> {
   int _selectedTab = 0;
   bool _settingsLoaded = false;
 
+  /// 标记是否已完成首次自动跳转聊天页，避免重复跳转
   static bool _initialChatPushDone = false;
 
   @override
   void initState() {
     super.initState();
+    // 确保每个代理类型都有对应的会话
     unawaited(
       ref.read(chatNotifierProvider.notifier).ensureAgentConversations(),
     );
+    // 延迟加载设置页面的 deferred library
     _loadSettingsDeferred();
+    // 首次进入时自动跳转到聊天页面
     if (!_initialChatPushDone) {
       _initialChatPushDone = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -57,6 +73,7 @@ class _AgentListPageState extends ConsumerState<AgentListPage> {
     }
   }
 
+  /// 延迟加载设置页面的 deferred library，加载完成后标记就绪
   Future<void> _loadSettingsDeferred() async {
     await settings_page.loadLibrary();
     if (mounted) setState(() => _settingsLoaded = true);
@@ -109,9 +126,9 @@ class _AgentListPageState extends ConsumerState<AgentListPage> {
                     .firstOrNull;
                 final lastMsg = conv != null
                     ? ref
-                        .watch(conversationMessagesProvider(conv.id))
-                        .valueOrNull
-                        ?.lastOrNull
+                          .watch(conversationMessagesProvider(conv.id))
+                          .valueOrNull
+                          ?.lastOrNull
                     : null;
 
                 return _AgentItem(
@@ -120,8 +137,7 @@ class _AgentListPageState extends ConsumerState<AgentListPage> {
                   lastMessage: lastMsg,
                   fallbackTime: conv?.updatedAt,
                   onTap: () {
-                    ref.read(activeAgentTypeProvider.notifier).state =
-                        def.type;
+                    ref.read(activeAgentTypeProvider.notifier).state = def.type;
                     ref
                         .read(chatNotifierProvider.notifier)
                         .switchToAgent(def.type);
@@ -169,22 +185,20 @@ class _PageSwitcher extends StatelessWidget {
         final isActive = i == selectedIndex;
         return TweenAnimationBuilder<double>(
           tween: Tween(end: isActive ? 1.0 : 0.0),
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOut,
+          duration: AppAnimations.normal,
+          curve: AppAnimations.easeOutBack,
           builder: (context, value, child) {
             if (value < 0.005 && !isActive) return const SizedBox.shrink();
+            final clampedOpacity = value.clamp(0.0, 1.0);
             return Opacity(
-              opacity: value,
+              opacity: clampedOpacity,
               child: Transform.translate(
-                offset: Offset((1 - value) * (i > selectedIndex ? 24 : -24), 0),
+                offset: Offset((1 - clampedOpacity) * (i > selectedIndex ? 24 : -24), 0),
                 child: child,
               ),
             );
           },
-          child: IndexedStack(
-            index: i,
-            children: children,
-          ),
+          child: IndexedStack(index: i, children: children),
         );
       }),
     );
@@ -204,7 +218,7 @@ class _BottomNavBar extends StatelessWidget {
     (Icons.settings_outlined, Icons.settings, '设置'),
   ];
 
-  static const _accent = Color(0xFF3EB573);
+  static const _accent = AppColors.green;
 
   @override
   Widget build(BuildContext context) {
@@ -223,8 +237,8 @@ class _BottomNavBar extends StatelessWidget {
                 children: [
                   // Sliding indicator pill
                   AnimatedPositioned(
-                    duration: const Duration(milliseconds: 280),
-                    curve: Curves.easeInOut,
+                    duration: AppAnimations.normal,
+                    curve: AppAnimations.springHeavy,
                     left: selectedTab * tabWidth + tabWidth / 2 - 16,
                     top: 0,
                     child: Container(
@@ -288,14 +302,15 @@ class _AnimatedNavTab extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         child: TweenAnimationBuilder<double>(
           tween: Tween(end: isActive ? 1.0 : 0.0),
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOut,
+          duration: AppAnimations.normal,
+          curve: AppAnimations.easeOutBack,
           builder: (context, value, child) {
-            final scale = 1.0 + value * 0.12;
+            final clamped = value.clamp(0.0, 1.0);
+            final scale = 1.0 + clamped * 0.15;
             final color = Color.lerp(
               AppColors.textTertiary,
               _BottomNavBar._accent,
-              value,
+              clamped,
             )!;
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -310,7 +325,7 @@ class _AnimatedNavTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 DefaultTextStyle(
-                  style: TextStyle(color: color, fontSize: 10),
+                  style: TextStyle(color: color, fontSize: AppTypography.micro),
                   child: Text(label),
                 ),
               ],
@@ -338,7 +353,7 @@ class _AgentItem extends StatelessWidget {
     required this.onTap,
   });
 
-  static const _chatGreen = Color(0xFF3EB573);
+  static const _chatGreen = AppColors.green;
 
   Color _avatarBg(bool active) {
     if (!active) return AppColors.surface;
@@ -351,23 +366,7 @@ class _AgentItem extends StatelessWidget {
   }
 
   String _formatTime(DateTime time) {
-    final local = time.toLocal();
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final msgDay = DateTime(local.year, local.month, local.day);
-    final diff = today.difference(msgDay);
-
-    if (diff.inDays == 0) {
-      return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-    } else if (diff.inDays == 1) {
-      return '昨天';
-    } else if (diff.inDays < 7) {
-      return ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][local.weekday - 1];
-    } else if (local.year == now.year) {
-      return '${local.month}月${local.day}日';
-    } else {
-      return '${local.year}年${local.month}月${local.day}日';
-    }
+    return TimeFormatters.agentListTime(time);
   }
 
   @override
@@ -375,11 +374,12 @@ class _AgentItem extends StatelessWidget {
     final previewText = lastMessage?.content ?? '';
     final displayTime = lastMessage?.createdAt ?? fallbackTime;
 
-    return GestureDetector(
+    return AppAnimations.scaleTap(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        height: 72,
+      child: AnimatedContainer(
+        duration: AppAnimations.quick,
+        curve: AppAnimations.easeOutBack,
+        constraints: const BoxConstraints(minHeight: 72),
         color: isActive ? AppColors.surfaceHover : Colors.transparent,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
@@ -389,7 +389,7 @@ class _AgentItem extends StatelessWidget {
               height: 56,
               decoration: BoxDecoration(
                 color: _avatarBg(isActive),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: AppRadius.smAll,
               ),
               clipBehavior: Clip.antiAlias,
               child: def.type == 'main'
@@ -400,12 +400,16 @@ class _AgentItem extends StatelessWidget {
                         if (bytes != null) {
                           return Image.memory(bytes, fit: BoxFit.cover);
                         }
-                        return Icon(def.icon, color: _avatarIconColor(isActive), size: 28);
+                        return Icon(
+                          def.icon,
+                          color: _avatarIconColor(isActive),
+                          size: 28,
+                        );
                       },
                     )
                   : Icon(def.icon, color: _avatarIconColor(isActive), size: 28),
             ),
-            const SizedBox(width: 12),
+            AppSpacing.hMDSm,
             Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -427,19 +431,19 @@ class _AgentItem extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: AppColors.textSecondary,
-                      fontSize: 14,
+                      fontSize: AppTypography.body,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 8),
+            AppSpacing.hSM,
             if (displayTime != null)
               Text(
                 _formatTime(displayTime),
                 style: const TextStyle(
                   color: AppColors.textTertiary,
-                  fontSize: 12,
+                  fontSize: AppTypography.caption,
                 ),
               ),
           ],

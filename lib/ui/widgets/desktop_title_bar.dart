@@ -1,8 +1,19 @@
+
+/// 桌面窗口标题栏 — 自定义无边框窗口控制区
+///
+/// 支持窗口拖动、双击最大化/还原、最小化/最大化/关闭按钮。
+/// 仅在桌面平台显示，移动平台返回空组件。
+/// 关闭按钮悬停时变红，最大化按钮根据当前状态切换图标。
+library;
+
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/theme/app_animations.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_typography.dart';
 
 /// 桌面窗口标题栏 — 支持窗口拖动、双击最大化/还原、最小化/最大化/关闭按钮
 class DesktopTitleBar extends StatefulWidget {
@@ -69,16 +80,16 @@ class _DesktopTitleBarState extends State<DesktopTitleBar> with WindowListener {
                   await windowManager.maximize();
                 }
               },
-              child: const Padding(
-                padding: EdgeInsets.only(left: 12),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 12),
                 child: Row(
                   children: [
-                    _LogoDot(),
-                    SizedBox(width: 8),
-                    Text(
+                    const _LogoDot(),
+                    AppSpacing.hSM,
+                    const Text(
                       'RIKO',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: AppTypography.caption,
                         fontWeight: FontWeight.w500,
                         color: AppColors.textSecondary,
                         fontFamily: 'MiSans',
@@ -169,17 +180,25 @@ class _WindowButtonState extends State<_WindowButton> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+          duration: AppAnimations.micro,
           width: 46,
           height: 32,
           color: _hovered ? widget.hoverColor : Colors.transparent,
           alignment: Alignment.center,
-          child: Icon(
-            widget.icon,
-            size: 14,
-            color: _hovered && widget.hoverIconColor != null
-                ? widget.hoverIconColor
-                : AppColors.textSecondary,
+          child: TweenAnimationBuilder<Color?>(
+            tween: ColorTween(
+              begin: AppColors.textSecondary,
+              end: _hovered && widget.hoverIconColor != null
+                  ? widget.hoverIconColor
+                  : AppColors.textSecondary,
+            ),
+            duration: AppAnimations.micro,
+            curve: AppAnimations.easeOut,
+            builder: (context, color, _) => Icon(
+              widget.icon,
+              size: 14,
+              color: color,
+            ),
           ),
         ),
       ),

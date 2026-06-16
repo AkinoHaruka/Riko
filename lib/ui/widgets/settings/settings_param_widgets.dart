@@ -1,5 +1,17 @@
+/// 设置页参数组件 — 模型选择、思考强度选择、参数输入字段和参数组
+///
+/// ModelSelectorWidget：模型下拉选择框。
+/// ReasoningEffortSelectorWidget：思考强度（高/最高）下拉选择框。
+/// ParamFieldWidget：单个参数输入字段，带范围校验。
+/// ParamGroupWidget：一组参数字段的容器，带分隔线。
+library;
+
 import 'package:flutter/material.dart';
+import '../../../core/theme/app_animations.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_radius.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_typography.dart';
 import 'settings_import_dialog.dart';
 
 /// 模型选择下拉框
@@ -26,10 +38,10 @@ class ModelSelectorWidget extends StatelessWidget {
             children: [
               Icon(
                 Icons.smart_toy,
-                color: const Color(0xFFd5d5d5).withValues(alpha: 0.6),
+                color: AppColors.textPrimary.withValues(alpha: 0.6),
                 size: 18,
               ),
-              const SizedBox(width: 8),
+              AppSpacing.hSM,
               const Text(
                 '模型',
                 style: TextStyle(
@@ -39,12 +51,12 @@ class ModelSelectorWidget extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          AppSpacing.vSM,
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.mdSm),
             decoration: BoxDecoration(
               color: AppColors.bgElevated,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: AppRadius.mdAll,
               border: Border.all(color: AppColors.border),
             ),
             child: DropdownButtonHideUnderline(
@@ -54,7 +66,7 @@ class ModelSelectorWidget extends StatelessWidget {
                 dropdownColor: AppColors.bgElevated,
                 style: const TextStyle(
                   color: AppColors.textPrimary,
-                  fontSize: 14,
+                  fontSize: AppTypography.body,
                 ),
                 icon: const Icon(
                   Icons.arrow_drop_down,
@@ -105,10 +117,10 @@ class ReasoningEffortSelectorWidget extends StatelessWidget {
             children: [
               Icon(
                 Icons.psychology,
-                color: const Color(0xFFd5d5d5).withValues(alpha: 0.6),
+                color: AppColors.textPrimary.withValues(alpha: 0.6),
                 size: 18,
               ),
-              const SizedBox(width: 8),
+              AppSpacing.hSM,
               const Text(
                 '思考强度',
                 style: TextStyle(
@@ -118,34 +130,43 @@ class ReasoningEffortSelectorWidget extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: AppColors.bgElevated,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppColors.border),
+          AppSpacing.vSM,
+          TweenAnimationBuilder<double>(
+            tween: Tween(end: thinkingEnabled ? 1.0 : 0.5),
+            duration: AppAnimations.quick,
+            curve: AppAnimations.easeOutBack,
+            builder: (context, opacity, child) => Opacity(
+              opacity: opacity.clamp(0.0, 1.0),
+              child: child,
             ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: reasoningEffort,
-                isExpanded: true,
-                dropdownColor: AppColors.bgElevated,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 14,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.mdSm),
+              decoration: BoxDecoration(
+                color: AppColors.bgElevated,
+                borderRadius: AppRadius.mdAll,
+                border: Border.all(color: AppColors.border),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: reasoningEffort,
+                  isExpanded: true,
+                  dropdownColor: AppColors.bgElevated,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: AppTypography.body,
+                  ),
+                  icon: const Icon(
+                    Icons.arrow_drop_down,
+                    color: AppColors.textTertiary,
+                  ),
+                  items: _reasoningEfforts.map((effort) {
+                    return DropdownMenuItem<String>(
+                      value: effort['value'],
+                      child: Text(effort['label']!),
+                    );
+                  }).toList(),
+                  onChanged: thinkingEnabled ? onChanged : null,
                 ),
-                icon: const Icon(
-                  Icons.arrow_drop_down,
-                  color: AppColors.textTertiary,
-                ),
-                items: _reasoningEfforts.map((effort) {
-                  return DropdownMenuItem<String>(
-                    value: effort['value'],
-                    child: Text(effort['label']!),
-                  );
-                }).toList(),
-                onChanged: thinkingEnabled ? onChanged : null,
               ),
             ),
           ),
@@ -191,7 +212,7 @@ class ParamFieldWidget extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          AppSpacing.hMDSm,
           SizedBox(
             width: 120,
             height: 36,
@@ -216,25 +237,25 @@ class ParamFieldWidget extends StatelessWidget {
                   vertical: 8,
                 ),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadius.smAll,
                   borderSide: const BorderSide(color: AppColors.border),
                 ),
                 enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadius.smAll,
                   borderSide: const BorderSide(color: AppColors.border),
                 ),
                 focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadius.smAll,
                   borderSide: BorderSide(
-                    color: const Color(0xFFd5d5d5).withValues(alpha: 0.5),
+                    color: AppColors.textPrimary.withValues(alpha: 0.5),
                   ),
                 ),
                 errorBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadius.smAll,
                   borderSide: const BorderSide(color: AppColors.error),
                 ),
                 focusedErrorBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: AppRadius.smAll,
                   borderSide: const BorderSide(color: AppColors.error),
                 ),
               ),

@@ -1,3 +1,10 @@
+/// 设置页面数据管理 mixin — 导入/导出/清空操作
+///
+/// 为设置页面提供数据导出（下载 .riko 文件）、数据导入（预览 + 合并）、
+/// 清空所有对话、清空所有记忆等操作的统一实现。
+/// 包含错误格式化和确认对话框等辅助方法。
+library;
+
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -9,11 +16,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/di/chat_provider.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/di/toast_provider.dart';
+import '../../../core/theme/app_animations.dart';
 import '../../../core/theme/app_colors.dart';
 import 'settings_import_dialog.dart';
 
 /// 设置页面的数据管理 mixin — 导入/导出、清空对话/记忆
 mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
+  /// 格式化设置操作错误信息，DioException 提取状态码，其他类型直接转字符串
   String formatSettingsError(dynamic error) {
     if (error is DioException) {
       if (error.error is String) {
@@ -27,18 +36,17 @@ mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
     return error.toString();
   }
 
+  /// 弹出确认对话框后执行危险操作
   Future<void> confirmAndClear(
     String title,
     String message,
     VoidCallback onConfirm,
   ) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await AppAnimations.showSpringDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.bgElevated,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(title, style: const TextStyle(color: AppColors.error)),
         content: Text(
           message,
@@ -51,10 +59,7 @@ mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text(
-              '确认',
-              style: TextStyle(color: AppColors.error),
-            ),
+            child: const Text('确认', style: TextStyle(color: AppColors.error)),
           ),
         ],
       ),
@@ -62,6 +67,7 @@ mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
     if (confirmed == true) onConfirm();
   }
 
+  /// 清空所有对话：逐个删除后清理 SharedPreferences 中的代理绑定，再重建新对话
   Future<void> clearAllConversations() async {
     try {
       final chatRepo = ref.read(chatRepositoryProvider);
@@ -102,6 +108,7 @@ mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
     }
   }
 
+  /// 导出数据：从后端下载 .riko 文件，用户选择保存位置
   Future<void> exportData() async {
     try {
       final apiClient = ref.read(apiClientProvider);
@@ -131,6 +138,7 @@ mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
     }
   }
 
+  /// 导入数据：选择 .riko 文件 → 预览 → 确认合并，导入后重建代理对话绑定
   Future<void> importData() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -154,15 +162,12 @@ mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
       final apiClient = ref.read(apiClientProvider);
 
       // Preview
-      final preview = await apiClient.uploadRaw(
-        '/import/preview',
-        file.bytes!,
-      );
+      final preview = await apiClient.uploadRaw('/import/preview', file.bytes!);
       if (preview == null || preview['error'] != null) {
         if (mounted) {
-          ref.read(toastProvider.notifier).show(
-            '导入预览失败: ${preview?['error'] ?? '未知错误'}',
-          );
+          ref
+              .read(toastProvider.notifier)
+              .show('导入预览失败: ${preview?['error'] ?? '未知错误'}');
         }
         return;
       }
@@ -170,7 +175,7 @@ mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
       if (!mounted) return;
 
       // Show preview dialog
-      final confirmed = await showDialog<bool>(
+      final confirmed = await AppAnimations.showSpringDialog<bool>(
         context: context,
         builder: (ctx) =>
             ImportPreviewDialog(preview: preview as Map<String, dynamic>),
@@ -185,20 +190,24 @@ mixin SettingsDataMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
       );
       if (mergeResult == null || mergeResult['error'] != null) {
         if (mounted) {
-          ref.read(toastProvider.notifier).show(
-            '导入失败: ${mergeResult?['error'] ?? '未知错误'}',
-          );
+          ref
+              .read(toastProvider.notifier)
+              .show('导入失败: ${mergeResult?['error'] ?? '未知错误'}');
         }
         return;
       }
 
       if (mounted) {
-        ref.read(toastProvider.notifier).show(
-          '导入完成: 新增 ${mergeResult['inserted'] ?? 0} 条, 更新 ${mergeResult['updated'] ?? 0} 条',
-        );
+        ref
+            .read(toastProvider.notifier)
+            .show(
+              '导入完成: 新增 ${mergeResult['inserted'] ?? 0} 条, 更新 ${mergeResult['updated'] ?? 0} 条',
+            );
         // 导入后重新绑定 Agent 对话：后端已清理空重复项，前端需重发现
         ref.read(chatNotifierProvider.notifier).resetAgents();
-        await ref.read(chatNotifierProvider.notifier).ensureAgentConversations();
+        await ref
+            .read(chatNotifierProvider.notifier)
+            .ensureAgentConversations();
         ref.invalidate(conversationsProvider);
       }
     } catch (e) {

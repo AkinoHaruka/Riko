@@ -28,15 +28,27 @@ export 'internal_event.dart';
 /// 2. 实时更新 streamingContent/reasoningContent
 /// 3. 管理监控面板记录（API 输入/输出、token 用量）
 /// 4. 追踪子代理（记忆提取/压缩/梦境）的活动与时间
+///
+/// 混入 [ChatAgentMixin]（代理会话管理）和 [ChatMonitorMixin]（监控记录管理），
+/// 是前端聊天功能的核心状态控制器。
 class ChatNotifier extends StateNotifier<ChatState>
     with ChatAgentMixin, ChatMonitorMixin {
   @override
   final RemoteChatRepository chatRepository;
+
+  /// AI 适配器工厂，按模型 ID 获取对应的适配器实例
   final AdapterFactory _adapterFactory;
+
   @override
   final Ref ref;
+
+  /// 乐观 UI 的消息 ID 计数器（负数，避免与后端 ID 冲突）
   int _pendingIdCounter = 0;
+
+  /// 流式更新节流定时器（150ms 间隔，减少 PUT 请求频率）
   Timer? _updateThrottle;
+
+  /// 标记 Notifier 是否已释放，防止释放后继续更新状态
   bool _disposed = false;
 
   ChatNotifier(this.chatRepository, this._adapterFactory, this.ref)
@@ -49,6 +61,15 @@ class ChatNotifier extends StateNotifier<ChatState>
     super.dispose();
   }
 
+  /// 发送用户消息并接收 AI 流式响应
+  ///
+  /// 完整流程：
+  /// 1. 确保活跃会话存在（无则自动创建主代理会话）
+  /// 2. 为 AI 附加日期/时间标记（不在 UI 显示）
+  /// 3. 乐观 UI：立即将用户消息加入 pendingMessages
+  /// 4. 发送用户消息到后端，创建助手占位消息
+  /// 5. 通过 SSE 流式接收 AI 响应，节流更新占位消息
+  /// 6. 流结束后保存最终内容、token 用量，清理 pending 消息
   Future<void> sendMessage(String content) async {
     var conversationId = ref.read(activeConversationIdProvider);
 
@@ -73,7 +94,8 @@ class ChatNotifier extends StateNotifier<ChatState>
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final existingForCheck =
-        ref.read(conversationMessagesProvider(conversationId)).valueOrNull ?? [];
+        ref.read(conversationMessagesProvider(conversationId)).valueOrNull ??
+        [];
     final hasMessageToday = existingForCheck.any((m) {
       final created = m.createdAt.toLocal();
       return created.year == today.year &&
@@ -141,10 +163,9 @@ class ChatNotifier extends StateNotifier<ChatState>
       final existingMessages =
           ref.read(conversationMessagesProvider(conversationId)).valueOrNull ??
           [];
+      final messageCountBefore = existingMessages.length;
       final context = existingMessages
-          .where((m) =>
-              m.id != pendingUserMsg.id &&
-              !(m.role == 'user' && m.content == trimmedContent))
+          .where((m) => m.id != pendingUserMsg.id)
           .map(
             (m) => Message(
               role: m.role,
@@ -156,10 +177,11 @@ class ChatNotifier extends StateNotifier<ChatState>
           .toList();
 
       final modelId = ref.read(selectedModelProvider);
-      final backendBaseUrl = ref.read(apiClientProvider).baseUrl;
+      final apiClient = ref.read(apiClientProvider);
       final adapter = _adapterFactory.getAdapter(
         modelId,
-        backendBaseUrl: backendBaseUrl,
+        backendBaseUrl: apiClient.baseUrl,
+        authToken: apiClient.currentToken,
       );
 
       final cache = ref.read(settingsCacheProvider);
@@ -185,7 +207,7 @@ class ChatNotifier extends StateNotifier<ChatState>
       options['conversation_id'] = conversationId;
 
       // 插入监控记录到数据库
-      await chatRepository.insertMonitorRecord(
+      final newRecordId = await chatRepository.insertMonitorRecord(
         conversationId: conversationId,
         requestJson: '',
         responseRawText: '',
@@ -206,7 +228,7 @@ class ChatNotifier extends StateNotifier<ChatState>
         apiInputHistory: records,
         hasMoreMonitorRecords: totalCount > records.length,
       );
-      monitorIndex = 0;
+      monitorIndex = records.indexWhere((r) => r.id == newRecordId);
 
       final stream = adapter.chatStream(
         aiContent,
@@ -226,9 +248,7 @@ class ChatNotifier extends StateNotifier<ChatState>
       var hasReceivedContent = false;
       waitingTimer = Timer(const Duration(seconds: 5), () {
         if (!hasReceivedContent && state.isLoading) {
-          state = state.copyWith(
-            streamingContent: '服务器繁忙，正在排队等待响应...',
-          );
+          state = state.copyWith(streamingContent: '服务器繁忙，正在排队等待响应...');
         }
       });
 
@@ -253,21 +273,30 @@ class ChatNotifier extends StateNotifier<ChatState>
                 );
                 newHistory[monitorIndex] = updatedRecord;
                 state = state.copyWith(apiInputHistory: newHistory);
-                chatRepository.updateMonitorRecord(
-                  id: record.id!,
-                  requestJson: fullRequestJson,
-                );
+                chatRepository
+                    .updateMonitorRecord(
+                      id: record.id!,
+                      requestJson: fullRequestJson,
+                    )
+                    .catchError((Object e) {
+                      debugPrint(
+                        '[ChatNotifier] updateMonitorRecord failed: $e',
+                      );
+                      return 0;
+                    });
               }
             }
           }
           if (chunk.toolCallInfo != null) {
             appendInternalEvent('tool_call', {
               'tools': chunk.toolCallInfo!.tools
-                  .map((t) => {
-                        'name': t.name,
-                        'arguments': t.arguments,
-                        'result_preview': t.resultPreview,
-                      })
+                  .map(
+                    (t) => {
+                      'name': t.name,
+                      'arguments': t.arguments,
+                      'result_preview': t.resultPreview,
+                    },
+                  )
                   .toList(),
               'summary': chunk.toolCallInfo!.summary,
             }, monitorIndex);
@@ -354,9 +383,10 @@ class ChatNotifier extends StateNotifier<ChatState>
         }
 
         if (chunk.isFinished) {
-          debugPrint(
-            '[聊天] 流式响应结束，总内容长度: ${contentBuffer.length}',
-          );
+          debugPrint('[聊天] 流式响应结束，总内容长度: ${contentBuffer.length}');
+          // 流结束前取消节流定时器，避免与最终保存竞态
+          _updateThrottle?.cancel();
+          _updateThrottle = null;
           break;
         }
       }
@@ -402,20 +432,31 @@ class ChatNotifier extends StateNotifier<ChatState>
         );
       }
 
-      // 每次成功对话后增加消息计数
-      state = state.copyWith(messageCount: state.messageCount + 2);
+      // 使消息列表 Provider 失效
+      ref.invalidate(conversationMessagesProvider(conversationId));
+
+      // 根据实际消息列表长度变化更新计数
+      final messagesAfter = await ref.read(
+        conversationMessagesProvider(conversationId).future,
+      );
+      final actualDelta = messagesAfter.length - messageCountBefore;
+      if (actualDelta > 0) {
+        state = state.copyWith(messageCount: state.messageCount + actualDelta);
+      }
 
       // 流结束，确保最终内容已保存
       final finalContent = contentBuffer.toString();
       if (finalContent.isEmpty && capturedError == null) {
         const emptyMsg = 'AI 未返回任何内容，请检查 API Key 配置或重试';
         await chatRepository.updateMessageContent(placeholderId, emptyMsg);
-        state = state.copyWith(error: emptyMsg);
-      } else {
-        await chatRepository.updateMessageContent(
-          placeholderId,
-          finalContent,
+        state = state.copyWith(
+          error: const ErrorInfo(
+            category: ErrorCategory.unknown,
+            message: emptyMsg,
+          ),
         );
+      } else {
+        await chatRepository.updateMessageContent(placeholderId, finalContent);
       }
       if (reasoningBuffer.isNotEmpty) {
         await chatRepository.updateMessageReasoningContent(
@@ -423,9 +464,6 @@ class ChatNotifier extends StateNotifier<ChatState>
           reasoningBuffer.toString(),
         );
       }
-
-      // 使消息列表 Provider 失效
-      ref.invalidate(conversationMessagesProvider(conversationId));
     } on Exception catch (e) {
       if (placeholderId != null) {
         try {
@@ -450,23 +488,33 @@ class ChatNotifier extends StateNotifier<ChatState>
         }
       }
 
-      String errorMsg;
+      ErrorInfo errorInfo;
       if (capturedError != null) {
-        errorMsg = capturedError!.message;
+        errorInfo = capturedError!;
       } else if (stage == 'sending_user_message') {
-        errorMsg = '发送消息失败';
+        errorInfo = const ErrorInfo(
+          category: ErrorCategory.network,
+          message: '发送消息失败',
+        );
       } else if (stage == 'creating_placeholder') {
-        errorMsg = '创建助手响应失败';
+        errorInfo = const ErrorInfo(
+          category: ErrorCategory.unknown,
+          message: '创建助手响应失败',
+        );
       } else {
-        errorMsg =
-            'AI 响应中断: ${e.toString().replaceFirst('Exception: ', '')}';
+        errorInfo = ErrorInfo(
+          category: ErrorCategory.unknown,
+          message: 'AI 响应中断: ${e.toString().replaceFirst('Exception: ', '')}',
+        );
       }
 
       state = state.copyWith(
-        error: errorMsg,
+        error: errorInfo,
         clearStreamingAssistantMessageId: true,
       );
     } finally {
+      _updateThrottle?.cancel();
+      _updateThrottle = null;
       waitingTimer?.cancel();
       state = state.copyWith(
         isLoading: false,
@@ -477,12 +525,14 @@ class ChatNotifier extends StateNotifier<ChatState>
     }
   }
 
+  /// 创建新会话并切换为当前活跃会话
   Future<void> createConversation(String title) async {
     final id = await chatRepository.createConversation(title);
     ref.read(activeConversationIdProvider.notifier).state = id;
     clearPendingIfMatched();
   }
 
+  /// 切换到指定会话，重置状态并加载该会话的监控记录
   Future<void> switchConversation(String? id) async {
     ref.read(activeConversationIdProvider.notifier).state = id;
     _pendingIdCounter = 0;
@@ -507,10 +557,12 @@ class ChatNotifier extends StateNotifier<ChatState>
     }
   }
 
+  /// 重命名指定会话
   Future<void> renameConversation(String id, String newTitle) async {
     await chatRepository.renameConversation(id, newTitle);
   }
 
+  /// 删除指定会话，若为当前活跃会话则清空活跃 ID
   Future<void> deleteConversation(String id) async {
     await chatRepository.deleteConversation(id);
     final activeId = ref.read(activeConversationIdProvider);
@@ -519,14 +571,17 @@ class ChatNotifier extends StateNotifier<ChatState>
     }
   }
 
+  /// 切换会话的归档状态
   Future<void> toggleArchiveConversation(String id, bool isArchived) async {
     await chatRepository.toggleArchiveConversation(id, isArchived);
   }
 
+  /// 删除指定消息
   Future<void> deleteMessage(String messageId) async {
     await chatRepository.deleteMessage(messageId);
   }
 
+  /// 清空指定会话的所有消息
   Future<void> clearConversationMessages(String conversationId) async {
     await chatRepository.clearMessages(conversationId);
   }
@@ -546,7 +601,9 @@ class ChatNotifier extends StateNotifier<ChatState>
       final tokenUsage = result['token_usage'] as int? ?? 0;
       final msgCount = result['message_count'] as int? ?? 0;
       state = state.copyWith(tokenCount: tokenUsage, messageCount: msgCount);
-    } catch (_) {}
+    } catch (_) {
+      debugPrint('[ChatNotifier] fetchTokenStatus failed');
+    }
   }
 
   /// 从设置缓存同步子代理触发参数
@@ -554,12 +611,10 @@ class ChatNotifier extends StateNotifier<ChatState>
     final cache = ref.read(settingsCacheProvider);
     final params = cache.params;
     state = state.copyWith(
-      memoryMinMessages:
-          params['param_session_memory_min_messages'] ?? 6,
+      memoryMinMessages: params['param_session_memory_min_messages'] ?? 6,
       memoryMinTokensBetweenUpdate:
           params['param_session_memory_min_tokens_between_update'] ?? 2000,
-      compactTriggerTokens:
-          params['param_compact_trigger_tokens'] ?? 200000,
+      compactTriggerTokens: params['param_compact_trigger_tokens'] ?? 200000,
       dreamMinHours: params['param_dream_min_hours'] ?? 24,
     );
   }
@@ -568,6 +623,10 @@ class ChatNotifier extends StateNotifier<ChatState>
   int get currentTokenCount => state.tokenCount;
 }
 
+/// 聊天状态 Notifier Provider
+///
+/// 依赖 [chatRepositoryProvider] 和 [adapterFactoryProvider]，
+/// 在被 watch 时自动创建 [ChatNotifier] 实例。
 final chatNotifierProvider = StateNotifierProvider<ChatNotifier, ChatState>((
   ref,
 ) {

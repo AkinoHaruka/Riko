@@ -1,3 +1,10 @@
+/// 头像数据提供与持久化
+///
+/// 提供主代理头像的读取（FutureProvider）、保存和删除功能。
+/// 原生平台同时存储文件和 base64，Web 平台仅存 base64。
+/// 导出数据时 base64 确保头像不丢失。
+library;
+
 import 'dart:convert';
 import 'dart:io';
 

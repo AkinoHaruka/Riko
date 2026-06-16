@@ -1,3 +1,9 @@
+/// 归档会话页面 — 查看和管理已归档的对话
+///
+/// 显示所有已归档对话列表，支持取消归档（恢复到活跃列表）和彻底删除操作。
+/// 删除前会弹出确认对话框以防误操作。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -176,7 +182,7 @@ class ArchivePage extends ConsumerWidget {
     WidgetRef ref,
     Conversation conversation,
   ) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await AppAnimations.showSpringDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.bgElevated,

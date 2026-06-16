@@ -1,8 +1,20 @@
+/// 终端式监控面板 — API 请求/响应日志与子代理控制台
+///
+/// 以终端风格展示 API 请求/响应日志、子代理活动记录、错误信息、Token 用量统计。
+/// 包含子代理触发按钮栏（会话记忆/压缩/整固）和底部状态栏（轮次计数/Compact/Clear）。
+/// 日志条目可展开查看请求 JSON、工具调用、错误详情、响应文本和 Token 用量。
+library;
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/di/chat_provider.dart';
+import '../../core/theme/app_animations.dart';
+import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_radius.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_typography.dart';
 import 'terminal_panel_colors.dart';
 import 'terminal_panel_sections.dart';
 
@@ -52,7 +64,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
   final _scrollController = ScrollController();
   bool _cursorVisible = true;
   late Timer _cursorTimer;
-  final Set<int> _expandedIndices = {};
+  final Set<String> _expandedRecordIds = {};
   final _jsonHighlighter = JsonHighlighter();
 
   @override
@@ -64,6 +76,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
     _scrollController.addListener(_onScroll);
   }
 
+  /// 滚动监听：接近底部时自动加载更多记录
   void _onScroll() {
     if (!_scrollController.hasClients) return;
     final maxScroll = _scrollController.position.maxScrollExtent;
@@ -83,11 +96,20 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
     super.dispose();
   }
 
+  /// 新记录到达时自动展开最新一条（通过比较新旧列表识别新增记录）
   @override
   void didUpdateWidget(covariant TerminalPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.inputHistory.length > oldWidget.inputHistory.length) {
-      _expandedIndices.add(widget.inputHistory.length - 1);
+      final oldIds = oldWidget.inputHistory
+          .where((r) => r.id != null)
+          .map((r) => r.id!)
+          .toSet();
+      for (final record in widget.inputHistory) {
+        if (record.id != null && !oldIds.contains(record.id)) {
+          _expandedRecordIds.add(record.id!);
+        }
+      }
     }
   }
 
@@ -145,7 +167,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
               'API Monitor',
               style: TextStyle(
                 color: TerminalPanelColors.textWhite,
-                fontSize: 12,
+                fontSize: AppTypography.caption,
                 fontFamily: 'Consolas',
                 fontFamilyFallback: ['Cascadia Code', 'monospace'],
               ),
@@ -170,7 +192,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
               SubAgentActivitiesWidget(activities: widget.subAgentActivities),
             if (ref.watch(dreamNotifierProvider).status != DreamStatus.idle ||
                 widget.subAgentActivities.isNotEmpty)
-              const SizedBox(height: 4),
+              AppSpacing.vXS,
             Expanded(
               child: widget.inputHistory.isEmpty
                   ? _buildEmptyState()
@@ -199,19 +221,19 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
   }
 
   Widget _buildLoadMoreHint() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 8),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Center(
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
+            const Icon(
               Icons.arrow_upward,
               color: TerminalPanelColors.timestamp,
               size: 12,
             ),
-            SizedBox(width: 4),
-            Text(
+            AppSpacing.hXS,
+            const Text(
               '向上滑动加载更多...',
               style: TextStyle(
                 color: TerminalPanelColors.timestamp,
@@ -268,7 +290,9 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
 
   Widget _buildLogEntry(ApiMonitorRecord record, int index) {
     final timeStr = DateFormat('HH:mm:ss').format(record.createdAt);
-    final isExpanded = _expandedIndices.contains(index);
+    final recordId = record.id;
+    final isExpanded =
+        recordId != null && _expandedRecordIds.contains(recordId);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -277,11 +301,12 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
         children: [
           GestureDetector(
             onTap: () {
+              if (recordId == null) return;
               setState(() {
                 if (isExpanded) {
-                  _expandedIndices.remove(index);
+                  _expandedRecordIds.remove(recordId);
                 } else {
-                  _expandedIndices.add(index);
+                  _expandedRecordIds.add(recordId);
                 }
               });
             },
@@ -289,7 +314,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
               padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
               decoration: BoxDecoration(
                 color: TerminalPanelColors.titleBar.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: AppRadius.xsAll,
               ),
               child: Row(
                 children: [
@@ -300,7 +325,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
                     color: TerminalPanelColors.timestamp,
                     size: 14,
                   ),
-                  const SizedBox(width: 4),
+                  AppSpacing.hXS,
                   Text(
                     '[$timeStr]',
                     style: const TextStyle(
@@ -310,7 +335,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
                       fontFamilyFallback: ['Cascadia Code', 'monospace'],
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  AppSpacing.hSM,
                   Expanded(
                     child: Text(
                       record.isComplete ? 'Complete' : 'Streaming...',
@@ -330,7 +355,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
             ),
           ),
           if (isExpanded) ...[
-            const SizedBox(height: 4),
+            AppSpacing.vXS,
             RequestSectionWidget(
               requestJson: record.requestJson,
               highlighter: _jsonHighlighter,
@@ -353,7 +378,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
                 ),
             if (record.errorMessage != null &&
                 record.errorMessage!.isNotEmpty) ...[
-              const SizedBox(height: 4),
+              AppSpacing.vXS,
               ErrorSectionWidget(
                 errorCategory: record.errorCategory,
                 errorCode: record.errorCode,
@@ -361,7 +386,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
                 errorSuggestion: record.errorSuggestion,
               ),
             ],
-            const SizedBox(height: 4),
+            AppSpacing.vXS,
             ResponseSectionWidget(responseRawText: record.responseRawText),
             ...record.internalEvents
                 .where((e) => e.type == 'compact')
@@ -371,7 +396,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
                     child: CompactSectionWidget(data: e.data),
                   ),
                 ),
-            const SizedBox(height: 4),
+            AppSpacing.vXS,
             UsageSectionWidget(tokenUsage: record.tokenUsage),
           ],
         ],
@@ -387,8 +412,8 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(4),
+        color: AppColors.bgSecondary,
+        borderRadius: AppRadius.xsAll,
         border: Border(
           left: BorderSide(
             color: TerminalPanelColors.dreamCyan.withValues(alpha: 0.3),
@@ -437,7 +462,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
                 shape: BoxShape.circle,
               ),
             ),
-          const SizedBox(width: 8),
+          AppSpacing.hSM,
           Expanded(
             child: Text(
               dreamState.status == DreamStatus.running
@@ -475,7 +500,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
               onPressed: widget.onTriggerSessionMemory,
             ),
           ),
-          const SizedBox(width: 8),
+          AppSpacing.hSM,
           Expanded(
             child: _SubAgentTriggerButton(
               label: '压缩',
@@ -486,7 +511,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
               onPressed: widget.onTriggerCompact,
             ),
           ),
-          const SizedBox(width: 8),
+          AppSpacing.hSM,
           Expanded(
             child: _SubAgentTriggerButton(
               label: '整固',
@@ -522,16 +547,16 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
           if (widget.isCompactEnabled && widget.onCompact != null)
             GestureDetector(
               onTap: widget.onCompact,
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.compress,
                     color: TerminalPanelColors.compactOrange,
                     size: 14,
                   ),
-                  SizedBox(width: 4),
-                  Text(
+                  AppSpacing.hXS,
+                  const Text(
                     'Compact',
                     style: TextStyle(
                       color: TerminalPanelColors.compactOrange,
@@ -544,19 +569,19 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
               ),
             ),
           if (widget.isCompactEnabled && widget.onCompact != null)
-            const SizedBox(width: 12),
+            AppSpacing.hMDSm,
           GestureDetector(
             onTap: widget.onClear,
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
+                const Icon(
                   Icons.delete_outline,
                   color: TerminalPanelColors.timestamp,
                   size: 14,
                 ),
-                SizedBox(width: 4),
-                Text(
+                AppSpacing.hXS,
+                const Text(
                   'Clear',
                   style: TextStyle(
                     color: TerminalPanelColors.timestamp,
@@ -574,6 +599,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
   }
 }
 
+/// 子代理触发按钮 — 带加载状态和完成反馈的触发按钮
 class _SubAgentTriggerButton extends StatefulWidget {
   final String label;
   final IconData icon;
@@ -613,10 +639,10 @@ class _SubAgentTriggerButtonState extends State<_SubAgentTriggerButton> {
   Widget build(BuildContext context) {
     final enabled = widget.isEnabled && !widget.isLoading;
     final borderColor = _justCompleted
-        ? const Color(0xFF2ED573)
+        ? AppColors.success
         : enabled
         ? widget.color.withValues(alpha: 0.4)
-        : const Color(0xFF2C2C2C);
+        : AppColors.border;
 
     return SizedBox(
       height: 36,
@@ -624,15 +650,16 @@ class _SubAgentTriggerButtonState extends State<_SubAgentTriggerButton> {
         color: Colors.transparent,
         child: InkWell(
           onTap: enabled ? widget.onPressed : null,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: AppRadius.xsAll,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
+            duration: AppAnimations.quick,
+            curve: AppAnimations.springIOS,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: AppRadius.xsAll,
               border: Border.all(color: borderColor, width: 1),
               color: enabled
                   ? widget.color.withValues(alpha: 0.08)
-                  : const Color(0xFF252525),
+                  : AppColors.surface,
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -647,12 +674,12 @@ class _SubAgentTriggerButtonState extends State<_SubAgentTriggerButton> {
                     ),
                   )
                 else if (_justCompleted)
-                  const Icon(Icons.check, size: 14, color: Color(0xFF2ED573))
+                  const Icon(Icons.check, size: 14, color: AppColors.success)
                 else
                   Icon(
                     widget.icon,
                     size: 14,
-                    color: enabled ? widget.color : const Color(0xFF555555),
+                    color: enabled ? widget.color : AppColors.textDisabled,
                   ),
                 const SizedBox(width: 6),
                 Text(
@@ -662,11 +689,11 @@ class _SubAgentTriggerButtonState extends State<_SubAgentTriggerButton> {
                       ? '完成'
                       : widget.label,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: AppTypography.caption,
                     fontWeight: FontWeight.w500,
                     color: enabled
-                        ? const Color(0xFFd5d5d5)
-                        : const Color(0xFF555555),
+                        ? AppColors.textPrimary
+                        : AppColors.textDisabled,
                   ),
                 ),
               ],

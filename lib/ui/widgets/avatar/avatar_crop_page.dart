@@ -1,9 +1,16 @@
+/// 头像裁剪页面 — 全屏裁剪工具
+///
+/// 接收原始图片字节数据，提供 1:1 正方形裁剪区域，
+/// 用户确认裁剪后返回裁剪结果的 Uint8List。
+library;
+
 import 'dart:typed_data';
 
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_typography.dart';
 
 /// 头像裁剪页面 — 全屏裁剪，锁定 1:1 正方形
 ///
@@ -32,7 +39,11 @@ class _AvatarCropPageState extends State<AvatarCropPage> {
         ),
         title: const Text(
           '裁剪头像',
-          style: TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: AppTypography.title,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         actions: [
           TextButton(

@@ -1,6 +1,17 @@
+/// 图标展示页面 — 预览自定义圆形图标和 Font Awesome 图标
+///
+/// 开发辅助页面，用于预览和选择应用中使用的图标样式。
+/// 与主应用逻辑隔离，不参与正常导航流程。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:math' as math;
+
+import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_radius.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_typography.dart';
 
 /// 图标展示页面 — 预览自定义圆形图标和 Font Awesome 图标，与主应用逻辑隔离
 class IconGalleryPage extends StatelessWidget {
@@ -14,12 +25,12 @@ class IconGalleryPage extends StatelessWidget {
         backgroundColor: const Color(0xFF1E1E1E),
         title: const Text(
           '图标选择器',
-          style: TextStyle(color: Colors.white, fontSize: 18),
+          style: TextStyle(color: Colors.white, fontSize: AppTypography.title),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -44,7 +55,7 @@ class IconGalleryPage extends StatelessWidget {
                   name: 'angleLeft',
                   icon: const FaIcon(
                     FontAwesomeIcons.angleLeft,
-                    color: Color(0xFFd5d5d5),
+                    color: AppColors.textPrimary,
                     size: 24,
                   ),
                 ),
@@ -52,7 +63,7 @@ class IconGalleryPage extends StatelessWidget {
                   name: 'chevronLeft',
                   icon: const FaIcon(
                     FontAwesomeIcons.chevronLeft,
-                    color: Color(0xFFd5d5d5),
+                    color: AppColors.textPrimary,
                     size: 24,
                   ),
                 ),
@@ -60,7 +71,7 @@ class IconGalleryPage extends StatelessWidget {
                   name: 'ellipsis',
                   icon: const FaIcon(
                     FontAwesomeIcons.ellipsis,
-                    color: Color(0xFFd5d5d5),
+                    color: AppColors.textPrimary,
                     size: 24,
                   ),
                 ),
@@ -68,7 +79,7 @@ class IconGalleryPage extends StatelessWidget {
                   name: 'faceLaugh',
                   icon: const FaIcon(
                     FontAwesomeIcons.faceLaugh,
-                    color: Color(0xFFd5d5d5),
+                    color: AppColors.textPrimary,
                     size: 24,
                   ),
                 ),
@@ -88,14 +99,14 @@ class IconGalleryPage extends StatelessWidget {
       height: 36,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: const Color(0xFFd5d5d5), width: 1.5),
+        border: Border.all(color: AppColors.textPrimary, width: 1.5),
       ),
       child: Center(
         child: Transform.rotate(
           angle: math.pi / 2, // 顺时针旋转 90°
           child: const FaIcon(
             FontAwesomeIcons.wifi,
-            color: Color(0xFFd5d5d5),
+            color: AppColors.textPrimary,
             size: 18,
           ),
         ),
@@ -110,7 +121,7 @@ class IconGalleryPage extends StatelessWidget {
       height: 36,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: const Color(0xFFd5d5d5), width: 1.5),
+        border: Border.all(color: AppColors.textPrimary, width: 1.5),
       ),
       child: const Center(
         child: FaIcon(
@@ -129,7 +140,7 @@ class IconGalleryPage extends StatelessWidget {
       height: 36,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: const Color(0xFFd5d5d5), width: 1.5),
+        border: Border.all(color: AppColors.textPrimary, width: 1.5),
       ),
       child: const Center(
         child: FaIcon(
@@ -148,7 +159,7 @@ class IconGalleryPage extends StatelessWidget {
         title,
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 16,
+          fontSize: AppTypography.subtitle,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -162,8 +173,8 @@ Widget _buildCustomIconCard({required String name, required Widget icon}) {
     height: 90,
     decoration: BoxDecoration(
       color: const Color(0xFF1E1E1E),
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: const Color(0xFF2C2C2C)),
+      borderRadius: AppRadius.mdAll,
+      border: Border.all(color: AppColors.border),
     ),
     child: Column(
       mainAxisAlignment: MainAxisAlignment.center,

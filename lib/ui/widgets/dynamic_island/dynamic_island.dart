@@ -1,5 +1,19 @@
+/// 动态岛 — 顶部状态指示器组件
+///
+/// 仿 iOS 动态岛设计，收起时显示 Token 用量，展开后展示三个子代理
+/// （会话记忆/压缩/整固）的累积进度条和百分比环形指示器。
+/// 点击切换展开/收起，带平滑尺寸和透明度过渡动画。
+library;
+
 import 'dart:math' as math;
+import 'dart:ui';
 import 'package:flutter/material.dart';
+
+import '../../../core/theme/app_animations.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_radius.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_typography.dart';
 
 /// 动态岛 — 顶部状态指示器，展示 Token 用量和子代理（会话记忆/压缩/整固）的累积进度
 ///
@@ -40,10 +54,13 @@ class _DynamicIslandState extends State<DynamicIsland>
     super.initState();
     _ac = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 350),
+      duration: AppAnimations.page,
     );
-    _curve = CurvedAnimation(parent: _ac, curve: Curves.easeOutCubic);
-    _ac.addListener(() => setState(() {}));
+    _curve = CurvedAnimation(
+      parent: _ac,
+      curve: AppAnimations.easeOutBack,
+      reverseCurve: AppAnimations.easeInOutCubic,
+    );
   }
 
   @override
@@ -71,46 +88,58 @@ class _DynamicIslandState extends State<DynamicIsland>
 
   @override
   Widget build(BuildContext context) {
-    final t = _curve.value;
-    final w = _compactW + (_expandedW - _compactW) * t;
-    final h = _compactH + (_expandedH - _compactH) * t;
-    final r = 17 + (16 - 17) * t;
-    final expandOpacity = (t - 0.4).clamp(0.0, 1.0) / 0.6;
-    final compactOpacity = 1.0 - t;
-
     return Align(
       alignment: Alignment.topCenter,
-      child: GestureDetector(
-        onTap: _expanded ? null : _toggle,
-        child: Container(
-          width: w,
-          height: h,
-          decoration: BoxDecoration(
-            color: const Color(0xE6111111),
-            borderRadius: BorderRadius.circular(r),
-            border: Border.all(color: const Color(0x30FFFFFF), width: 0.5),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.4),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Stack(
-            children: [
-              Opacity(opacity: compactOpacity, child: _buildCompact()),
-              if (expandOpacity > 0)
-                Positioned.fill(
-                  child: OverflowBox(
-                    alignment: Alignment.topCenter,
-                    maxHeight: double.infinity,
-                    child: Opacity(opacity: expandOpacity, child: _buildExpanded()),
+      child: AppAnimations.scaleTap(
+        onTap: _toggle,
+        scaleDown: 0.97,
+        child: AnimatedBuilder(
+          animation: _curve,
+          builder: (context, _) {
+            final t = _curve.value;
+            final w = _compactW + (_expandedW - _compactW) * t;
+            final h = _compactH + (_expandedH - _compactH) * t;
+            final r = 17 + (16 - 17) * t;
+            final expandOpacity = ((t - 0.4) / 0.6).clamp(0.0, 1.0);
+            final compactOpacity = (1.0 - t).clamp(0.0, 1.0);
+
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(r),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  width: w,
+                  height: h,
+                  decoration: BoxDecoration(
+                    color: AppColors.bgPrimary.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(r),
+                    border: Border.all(color: const Color(0x30FFFFFF), width: 0.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.4),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Stack(
+                    children: [
+                      Opacity(opacity: compactOpacity, child: _buildCompact()),
+                      if (expandOpacity > 0)
+                        Positioned.fill(
+                          child: OverflowBox(
+                            alignment: Alignment.topCenter,
+                            maxHeight: double.infinity,
+                            child: Opacity(opacity: expandOpacity, child: _buildExpanded(t)),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-            ],
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -121,16 +150,16 @@ class _DynamicIslandState extends State<DynamicIsland>
         ? '${_formatTokens(widget.tokenCount)} tokens'
         : '就绪';
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const _StatusDot(color: Color(0xFF2ED573)),
+          const _StatusDot(color: AppColors.success),
           const SizedBox(width: 10),
           Text(
             '璃 · $tokenText',
             style: const TextStyle(
-              color: Color(0xFFd5d5d5),
+              color: AppColors.textPrimary,
               fontSize: 13,
               fontWeight: FontWeight.w500,
             ),
@@ -140,11 +169,10 @@ class _DynamicIslandState extends State<DynamicIsland>
     );
   }
 
-  Widget _buildExpanded() {
+  Widget _buildExpanded(double t) {
     final tokenText = widget.tokenCount > 0
         ? '${_formatTokens(widget.tokenCount)} / ${_formatTokens(widget.maxTokens)} tokens'
         : '就绪';
-    final t = _curve.value;
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
       child: Column(
@@ -153,13 +181,13 @@ class _DynamicIslandState extends State<DynamicIsland>
         children: [
           Row(
             children: [
-              const _StatusDot(color: Color(0xFF2ED573)),
+              const _StatusDot(color: AppColors.success),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   '璃 · $tokenText',
                   style: const TextStyle(
-                    color: Color(0xFFd5d5d5),
+                    color: AppColors.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
@@ -171,21 +199,21 @@ class _DynamicIslandState extends State<DynamicIsland>
                   width: 24,
                   height: 24,
                   decoration: BoxDecoration(
-                    color: const Color(0x14FFFFFF),
-                    borderRadius: BorderRadius.circular(12),
+                    color: AppColors.highlight,
+                    borderRadius: AppRadius.mdAll,
                   ),
                   child: const Icon(
                     Icons.close,
-                    color: Color(0xFF999999),
+                    color: AppColors.textSecondary,
                     size: 14,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          const Divider(height: 1, color: Color(0x1AFFFFFF)),
-          const SizedBox(height: 12),
+          AppSpacing.vMDSm,
+          const Divider(height: 1, color: AppColors.surfaceGlass),
+          AppSpacing.vMDSm,
           _StatusRow(
             icon: Icons.note_outlined,
             label: '会话记忆',
@@ -261,17 +289,17 @@ class _StatusRow extends StatelessWidget {
     final rowOpacity = ((t - 0.35 - delay) / 0.25).clamp(0.0, 1.0);
     final pct = (progress * 100).round();
     final pctColor = progress >= 0.95
-        ? const Color(0xFF2ED573)
-        : const Color(0xFF777777);
+        ? AppColors.success
+        : AppColors.textTertiary;
     return Opacity(
       opacity: rowOpacity,
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF999999), size: 15),
-          const SizedBox(width: 8),
+          Icon(icon, color: AppColors.textSecondary, size: 15),
+          AppSpacing.hSM,
           Text(
             label,
-            style: const TextStyle(color: Color(0xFF999999), fontSize: 12),
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: AppTypography.caption),
           ),
           const Spacer(),
           Text(
@@ -318,7 +346,7 @@ class _ProgressRingPainter extends CustomPainter {
     final radius = size.width / 2 - 2.5;
 
     final bgPaint = Paint()
-      ..color = const Color(0x20FFFFFF)
+      ..color = AppColors.surfaceGlass
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5;
     canvas.drawCircle(center, radius, bgPaint);
@@ -326,7 +354,7 @@ class _ProgressRingPainter extends CustomPainter {
     if (progress <= 0) return;
 
     final color =
-        progress >= 0.95 ? const Color(0xFF2ED573) : const Color(0xFF3EB573);
+        progress >= 0.95 ? AppColors.success : AppColors.green;
     final arcPaint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke

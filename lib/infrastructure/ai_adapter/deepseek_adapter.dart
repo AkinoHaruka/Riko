@@ -1,34 +1,74 @@
+/// AI 适配器模块（通过本地 Fastify 后端转发）
+///
+/// 实现 [AIAdapter] 接口，通过 Dio HTTP 客户端将聊天请求转发到本地 Fastify 后端，
+/// 由后端代理与各 AI Provider 交互。前端不直接持有 API Key，保障密钥安全。
+/// 后端根据 model 参数自动路由到对应的 Provider（DeepSeek/OpenAI/Anthropic/Gemini 等）。
+///
+/// 核心特性：
+/// - SSE 流式响应：设置 Accept: text/event-stream，逐块解析后端推送的数据
+/// - 指数退避重试：连接类错误（超时/断连）最多重试 3 次，间隔 1s→2s→4s
+/// - 错误分类映射：将 DioException 和 HTTP 状态码转换为结构化 [ErrorInfo]
+/// - Token 热更新：通过 [updateToken] 动态更新 JWT，无需重建 Dio 实例
+library;
+
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:meta/meta.dart';
 
 import 'ai_adapter.dart';
 import 'sse_stream_parser.dart';
 
-/// DeepSeek AI 适配器（通过本地 Fastify 后端转发）
+/// AI 适配器（通过本地 Fastify 后端转发）
 ///
 /// 将请求转发到本地后端服务（默认 http://localhost:3000），
-/// 由后端负责与 DeepSeek API 交互，前端无需直接持有 API Key。
+/// 由后端负责与各 AI Provider 交互，前端无需直接持有 API Key。
+/// 后端根据 model 参数自动路由到对应的 Provider。
 class DeepSeekAdapter implements AIAdapter {
   final Dio _dio;
 
   static const String _defaultBaseUrl = 'http://localhost:3000';
   static const String _endpoint = '/chat/completions';
 
-  DeepSeekAdapter({String? baseUrl})
-    : _dio = Dio(
+  String? _authToken;
+
+  DeepSeekAdapter({String? baseUrl, String? authToken})
+    : _authToken = authToken,
+      _dio = Dio(
         BaseOptions(
           baseUrl: baseUrl ?? _defaultBaseUrl,
+          // 连接超时 30s，响应超时 600s（长文本生成可能耗时较长）
           connectTimeout: const Duration(seconds: 30),
-          // 后端流式响应可能较长，设置充足的接收超时
           receiveTimeout: const Duration(seconds: 600),
           headers: {
             'Content-Type': 'application/json',
+            // 声明接受 SSE 流式响应
             'Accept': 'text/event-stream',
           },
         ),
-      );
+      ) {
+    // 通过拦截器动态注入 JWT，避免在 BaseOptions 中硬编码 token
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (_authToken != null && _authToken!.isNotEmpty) {
+            options.headers['Authorization'] = 'Bearer $_authToken';
+          }
+          handler.next(options);
+        },
+      ),
+    );
+  }
+
+  /// 热更新认证令牌，无需重建 Dio 实例
+  void updateToken(String? token) {
+    _authToken = token;
+  }
+
+  /// 暴露 Dio 实例供测试注入 Mock HttpClientAdapter
+  @visibleForTesting
+  Dio get dio => _dio;
 
   /// 最大重试次数为3次，总计最多4次请求尝试（含首次）
   static const int _maxRetries = 3;
@@ -89,6 +129,7 @@ class DeepSeekAdapter implements AIAdapter {
       requestBody['thinking'] = {'type': thinkingType};
     }
 
+    // 仅在思考模式启用时传递 reasoning_effort，避免无效参数被后端拒绝
     if (thinkingType == 'enabled' || thinkingType == null) {
       final reasoningEffort = options['reasoning_effort'] as String?;
       if (reasoningEffort != null && reasoningEffort.isNotEmpty) {
@@ -109,8 +150,10 @@ class DeepSeekAdapter implements AIAdapter {
           _endpoint,
           data: jsonEncode(requestBody),
           options: Options(
+            // 使用 stream 响应类型以支持 SSE 逐块读取
             responseType: ResponseType.stream,
-            validateStatus: (status) => status != null && status >= 200 && status < 300,
+            validateStatus: (status) =>
+                status != null && status >= 200 && status < 300,
           ),
         );
 
@@ -135,18 +178,21 @@ class DeepSeekAdapter implements AIAdapter {
           throw Exception(errorInfo.message);
         }
 
-        // 递增重试间隔：1s、2s、4s
+        // 指数退避：1s、2s、4s
         final delaySeconds = _retryBase * (1 << attempt);
         yield StreamChunk(
           content: '[正在重连...第${attempt + 1}次尝试]',
           isStatus: true,
         );
+        // 使用 Future.delayed 实现延迟（原 Stream.periodic + break 方式延迟不生效）
         await Future<void>.delayed(Duration(seconds: delaySeconds));
       }
     }
   }
 
-  /// 从 DioException 中提取错误信息
+  /// 从 DioException 中提取可读错误信息
+  ///
+  /// 依次尝试：错误字符串 → Map 响应体 → ResponseBody 流式响应体 → 默认消息
   Future<String> _extractErrorMessage(DioException e) async {
     final errorObj = e.error;
     if (errorObj is String && errorObj.isNotEmpty) {
@@ -178,6 +224,7 @@ class DeepSeekAdapter implements AIAdapter {
     return e.message ?? '未知网络错误';
   }
 
+  /// 从错误响应 Map 中提取 message 字段，兼容 error.message 和 message 两种结构
   String? _parseErrorMap(Map<String, dynamic> data) {
     final error = data['error'];
     if (error is String && error.isNotEmpty) return error;
@@ -235,8 +282,8 @@ class DeepSeekAdapter implements AIAdapter {
       case 402:
         return const ErrorInfo(
           category: ErrorCategory.balance,
-          message: 'DeepSeek 账户余额不足',
-          suggestion: '请前往 DeepSeek 充值页面充值',
+          message: 'API 账户余额不足',
+          suggestion: '请前往对应平台充值页面充值',
         );
       case 422:
         return ErrorInfo(
@@ -254,7 +301,7 @@ class DeepSeekAdapter implements AIAdapter {
       case 503:
         return const ErrorInfo(
           category: ErrorCategory.server,
-          message: 'DeepSeek 服务器故障',
+          message: 'AI 服务器故障',
           suggestion: '请等待后重试',
         );
       default:

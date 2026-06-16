@@ -1,3 +1,9 @@
+/// 监控面板 — 子代理活动记录查看器
+///
+/// 显示会话记忆提取、上下文压缩、梦境整固三种子代理的活动记录，
+/// 支持 WebSocket 实时推送与高亮动画。每项活动可展开查看详细指标、提示词和记忆内容。
+library;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -5,7 +11,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/di/providers.dart';
+import '../core/theme/app_animations.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/app_radius.dart';
+import '../core/theme/app_spacing.dart';
+import '../core/theme/app_typography.dart';
 import '../infrastructure/websocket_client.dart';
 
 /// 监控面板 — 显示子代理（会话记忆/压缩/梦境整固）的活动记录，支持 WebSocket 实时推送与高亮动画
@@ -40,6 +50,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     super.dispose();
   }
 
+  /// 从后端加载历史活动记录，归一化 metadata 字段到顶层
   Future<void> _loadActivities() async {
     setState(() {
       _isLoading = true;
@@ -82,12 +93,17 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     }
   }
 
+  /// 订阅 WebSocket 实时活动事件
   void _subscribeWebSocket() {
     // connect() 由 webSocketClientProvider 在 initReady 后自动调用
     final wsClient = ref.read(webSocketClientProvider);
-    _wsSubscription = wsClient.events.listen(_onWebSocketEvent);
+    _wsSubscription = wsClient.events.listen(
+      _onWebSocketEvent,
+      onError: (Object e) => debugPrint('[MonitorPage] WS stream error: $e'),
+    );
   }
 
+  /// 处理 WebSocket 推送的活动事件，插入列表顶部并添加 2 秒高亮效果
   void _onWebSocketEvent(WebSocketEvent event) {
     final typeMap = {
       'session_memory_activity': 'session_memory',
@@ -118,6 +134,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     }
   }
 
+  /// 格式化时间戳为相对时间（如"3分钟前"），超过 7 天则显示完整日期
   String _formatTimestamp(dynamic timestamp) {
     DateTime dt;
     if (timestamp is String) {
@@ -147,30 +164,30 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     return DefaultTextStyle(
       style: const TextStyle(decoration: TextDecoration.none),
       child: Scaffold(
-      backgroundColor: AppColors.bgPrimary,
-      appBar: AppBar(
-        backgroundColor: AppColors.bgTertiary,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.textSecondary),
-          onPressed: () => context.go('/'),
-        ),
-        title: const Text(
-          '监控面板',
-          style: TextStyle(
-            color: AppColors.textPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
+        backgroundColor: AppColors.bgPrimary,
+        appBar: AppBar(
+          backgroundColor: AppColors.bgTertiary,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: AppColors.textSecondary),
+            onPressed: () => context.go('/'),
           ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: AppColors.textSecondary),
-            onPressed: _loadActivities,
+          title: const Text(
+            '监控面板',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: AppTypography.title,
+              fontWeight: FontWeight.bold,
+            ),
           ),
-        ],
-      ),
-      body: _buildBody(),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh, color: AppColors.textSecondary),
+              onPressed: _loadActivities,
+            ),
+          ],
+        ),
+        body: _buildBody(),
       ),
     );
   }
@@ -188,13 +205,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.error_outline, color: AppColors.error, size: 48),
-            const SizedBox(height: 16),
+            AppSpacing.vMD,
             Text(
               '加载失败: $_error',
               style: const TextStyle(color: AppColors.error),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 16),
+            AppSpacing.vMD,
             ElevatedButton(onPressed: _loadActivities, child: const Text('重试')),
           ],
         ),
@@ -211,12 +228,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
               size: 64,
               color: AppColors.textTertiary.withValues(alpha: 0.5),
             ),
-            const SizedBox(height: 16),
+            AppSpacing.vMD,
             const Text(
               '暂无子代理活动记录',
-              style: TextStyle(color: AppColors.textTertiary, fontSize: 16),
+              style: TextStyle(color: AppColors.textTertiary, fontSize: AppTypography.subtitle),
             ),
-            const SizedBox(height: 8),
+            AppSpacing.vSM,
             const Text(
               '子代理运行后，活动将在此处实时显示',
               style: TextStyle(color: AppColors.textTertiary, fontSize: 13),
@@ -231,7 +248,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       backgroundColor: AppColors.surface,
       onRefresh: _loadActivities,
       child: ListView.separated(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.md),
         itemCount: _activities.length,
         separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
@@ -275,11 +292,11 @@ class _ActivityCardState extends State<_ActivityCard>
     super.initState();
     _highlightController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: AppAnimations.normal,
     );
     _highlightAnimation = CurvedAnimation(
       parent: _highlightController,
-      curve: Curves.easeOut,
+      curve: AppAnimations.easeOut,
     );
     if (widget.isHighlighted) {
       _highlightController.forward();
@@ -315,7 +332,7 @@ class _ActivityCardState extends State<_ActivityCard>
         return Container(
           decoration: BoxDecoration(
             color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AppRadius.mdAll,
             border: Border.all(color: AppColors.border),
             boxShadow: glowAlpha > 0.01
                 ? [
@@ -328,7 +345,7 @@ class _ActivityCardState extends State<_ActivityCard>
                 : null,
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AppRadius.mdAll,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -361,7 +378,7 @@ class _ActivityCardState extends State<_ActivityCard>
     return Row(
       children: [
         Icon(config.icon, size: 18, color: config.accentColor),
-        const SizedBox(width: 8),
+        AppSpacing.hSM,
         Text(
           config.label,
           style: TextStyle(
@@ -373,7 +390,7 @@ class _ActivityCardState extends State<_ActivityCard>
         const Spacer(),
         Text(
           time,
-          style: const TextStyle(color: AppColors.textTertiary, fontSize: 12),
+          style: const TextStyle(color: AppColors.textTertiary, fontSize: AppTypography.caption),
         ),
       ],
     );
@@ -413,7 +430,7 @@ class _ActivityCardState extends State<_ActivityCard>
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               '错误: $error',
-              style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+              style: const TextStyle(color: Colors.redAccent, fontSize: AppTypography.caption),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
@@ -430,7 +447,7 @@ class _ActivityCardState extends State<_ActivityCard>
               summary,
               style: const TextStyle(
                 color: AppColors.textSecondary,
-                fontSize: 12,
+                fontSize: AppTypography.caption,
               ),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
@@ -453,12 +470,12 @@ class _ActivityCardState extends State<_ActivityCard>
                         color: AppColors.textTertiary,
                         size: 16,
                       ),
-                      const SizedBox(width: 4),
+                      AppSpacing.hXS,
                       const Text(
                         '提示词内容',
                         style: TextStyle(
                           color: AppColors.textTertiary,
-                          fontSize: 12,
+                          fontSize: AppTypography.caption,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -471,7 +488,7 @@ class _ActivityCardState extends State<_ActivityCard>
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.smAll,
                       border: Border.all(color: AppColors.border),
                     ),
                     constraints: const BoxConstraints(maxHeight: 300),
@@ -508,12 +525,12 @@ class _ActivityCardState extends State<_ActivityCard>
                         color: AppColors.textTertiary,
                         size: 16,
                       ),
-                      const SizedBox(width: 4),
+                      AppSpacing.hXS,
                       const Text(
                         '会话记忆内容',
                         style: TextStyle(
                           color: AppColors.textTertiary,
-                          fontSize: 12,
+                          fontSize: AppTypography.caption,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -526,7 +543,7 @@ class _ActivityCardState extends State<_ActivityCard>
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.smAll,
                       border: Border.all(color: AppColors.border),
                     ),
                     constraints: const BoxConstraints(maxHeight: 300),
@@ -608,7 +625,7 @@ class _ActivityCardState extends State<_ActivityCard>
               summary,
               style: const TextStyle(
                 color: AppColors.textSecondary,
-                fontSize: 12,
+                fontSize: AppTypography.caption,
               ),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
@@ -629,7 +646,7 @@ class _ActivityCardState extends State<_ActivityCard>
               label,
               style: const TextStyle(
                 color: AppColors.textTertiary,
-                fontSize: 12,
+                fontSize: AppTypography.caption,
               ),
             ),
           ),
@@ -638,7 +655,7 @@ class _ActivityCardState extends State<_ActivityCard>
               value,
               style: const TextStyle(
                 color: AppColors.textPrimary,
-                fontSize: 12,
+                fontSize: AppTypography.caption,
                 fontWeight: FontWeight.w500,
               ),
             ),

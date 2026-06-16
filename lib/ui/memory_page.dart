@@ -1,3 +1,11 @@
+/// 记忆管理页面 — 浏览、搜索和删除 AI 自动记录的记忆条目
+///
+/// 提供关键词搜索（后端 FTS5 BM25 排序）和类型筛选（事实/偏好/事件/情感），支持删除单条记忆。
+/// 记忆由后端会话记忆子代理自动提取并存储。
+library;
+
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -20,19 +28,37 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
   String _selectedType = 'all';
   Future<List<MemoryItem>>? _memoriesFuture;
 
+  /// 搜索防抖定时器，避免频繁请求后端
+  Timer? _searchDebounce;
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
+  }
+
+  /// 根据当前搜索关键词和筛选类型刷新记忆列表
+  /// 有关键词时使用后端 FTS5 搜索（忽略类型筛选），无关键词时按类型加载
   void _refreshMemories() {
     final memoryRepo = ref.read(memoryRepositoryProvider);
-    _memoriesFuture = _selectedType == 'all'
-        ? memoryRepo.getAll()
-        : memoryRepo.getByType(_selectedType);
+    if (_searchQuery.isNotEmpty) {
+      _memoriesFuture = memoryRepo.search(_searchQuery);
+    } else {
+      _memoriesFuture = _selectedType == 'all'
+          ? memoryRepo.getAll()
+          : memoryRepo.getByType(_selectedType);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final memoryRepo = ref.watch(memoryRepositoryProvider);
-    _memoriesFuture ??= _selectedType == 'all'
-        ? memoryRepo.getAll()
-        : memoryRepo.getByType(_selectedType);
+    // 首次构建时初始化数据，后续由 _refreshMemories() 驱动
+    _memoriesFuture ??= _searchQuery.isNotEmpty
+        ? memoryRepo.search(_searchQuery)
+        : _selectedType == 'all'
+            ? memoryRepo.getAll()
+            : memoryRepo.getByType(_selectedType);
 
     return Scaffold(
       backgroundColor: AppColors.bgPrimary,
@@ -62,6 +88,7 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
     );
   }
 
+  /// 构建搜索栏 — 圆角输入框，实时过滤记忆内容
   Widget _buildSearchBar() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -72,7 +99,16 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
           border: Border.all(color: AppColors.border),
         ),
         child: TextField(
-          onChanged: (value) => setState(() => _searchQuery = value),
+          onChanged: (value) {
+            // 300ms 防抖，避免每次按键都请求后端
+            _searchDebounce?.cancel();
+            _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+              setState(() {
+                _searchQuery = value;
+                _refreshMemories();
+              });
+            });
+          },
           style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
           decoration: const InputDecoration(
             hintText: '搜索记忆...',
@@ -90,12 +126,14 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
     );
   }
 
+  /// 构建类型筛选标签栏 — 全部/事实/偏好/事件/情感，选中态带绿色高亮
   Widget _buildTypeFilter() {
     final types = [
       ('all', '全部'),
       ('fact', '事实'),
       ('preference', '偏好'),
       ('event', '事件'),
+      ('emotions', '情感'),
     ];
 
     return Padding(
@@ -149,6 +187,8 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
     );
   }
 
+  /// 构建记忆列表 — FutureBuilder 加载数据
+  /// 搜索时由后端 FTS5 过滤，无搜索时按类型前端筛选
   Widget _buildMemoryList(RemoteMemoryRepository memoryRepo) {
     return FutureBuilder<List<MemoryItem>>(
       future: _memoriesFuture,
@@ -160,19 +200,10 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
         }
 
         final memories = snapshot.data ?? [];
-        final filtered = _searchQuery.isEmpty
-            ? memories
-            : memories
-                  .where(
-                    (m) =>
-                        m.content.toLowerCase().contains(
-                          _searchQuery.toLowerCase(),
-                        ) ||
-                        m.key.toLowerCase().contains(
-                          _searchQuery.toLowerCase(),
-                        ),
-                  )
-                  .toList();
+        // 搜索时后端已过滤，无需前端再筛选；无搜索时按类型前端筛选
+        final filtered = _searchQuery.isEmpty && _selectedType != 'all'
+            ? memories.where((m) => m.type == _selectedType).toList()
+            : memories;
 
         if (filtered.isEmpty) {
           return _buildEmptyState();
@@ -190,14 +221,21 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
     );
   }
 
+  /// 构建单条记忆卡片 — 显示类型标签、键名、内容和来源
   Widget _buildMemoryCard(MemoryItem memory, RemoteMemoryRepository repo) {
     final typeColors = {
       'fact': AppColors.cyan,
       'preference': AppColors.green,
       'event': AppColors.success,
+      'emotions': AppColors.warning,
     };
     final typeColor = typeColors[memory.type] ?? AppColors.textTertiary;
-    final typeLabels = {'fact': '事实', 'preference': '偏好', 'event': '事件'};
+    final typeLabels = {
+      'fact': '事实',
+      'preference': '偏好',
+      'event': '事件',
+      'emotions': '情感',
+    };
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -314,11 +352,12 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
     );
   }
 
+  /// 删除确认对话框 — 防止误操作
   Future<void> _confirmDelete(
     MemoryItem memory,
     RemoteMemoryRepository repo,
   ) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await AppAnimations.showSpringDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.bgElevated,

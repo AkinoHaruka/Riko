@@ -4,7 +4,18 @@ import 'package:flutter/material.dart';
 ///
 /// 配合 deferred as 导入使用，在页面加载前显示加载动画，
 /// 加载失败时提供重试按钮。
+///
+/// 使用方式：
+/// ```dart
+/// DeferredPageLoader(
+///   loader: () async {
+///     await settings_page.loadLibrary();
+///     return () => settings_page.SettingsPage();
+///   },
+/// )
+/// ```
 class DeferredPageLoader extends StatefulWidget {
+  /// 延迟加载函数，返回一个 Widget 构造器
   final Future<Widget Function()> Function() loader;
 
   const DeferredPageLoader({super.key, required this.loader});
@@ -14,7 +25,7 @@ class DeferredPageLoader extends StatefulWidget {
 }
 
 class _DeferredPageLoaderState extends State<DeferredPageLoader> {
-  late final Future<Widget Function()> _future;
+  late Future<Widget Function()> _future;
 
   @override
   void initState() {
@@ -39,7 +50,11 @@ class _DeferredPageLoaderState extends State<DeferredPageLoader> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.error_outline, color: Color(0xFFFF4757), size: 48),
+                  const Icon(
+                    Icons.error_outline,
+                    color: Color(0xFFFF4757),
+                    size: 48,
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     '加载失败: ${snapshot.error}',
@@ -47,10 +62,7 @@ class _DeferredPageLoaderState extends State<DeferredPageLoader> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _retry,
-                    child: const Text('重试'),
-                  ),
+                  ElevatedButton(onPressed: _retry, child: const Text('重试')),
                 ],
               ),
             ),

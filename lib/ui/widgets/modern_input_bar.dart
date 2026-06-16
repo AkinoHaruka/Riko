@@ -1,17 +1,17 @@
+/// 现代输入栏 — 聊天消息输入组件
+///
+/// 支持多行文本输入、Enter 发送 / Shift+Enter 换行、发送按钮（有文本时绿色）/ 加号按钮（空文本时展开参数面板）。
+/// 参数面板包含 Temperature 和 Max Tokens 滑块调节。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-
-/// 聊天输入栏配色常量
-class _Colors {
-  static const Color inputBarBg = Color(0xFF121212);
-  static const Color textFieldBg = Color(0xFF1E1E1E);
-  static const Color primaryText = Color(0xFFd5d5d5);
-  static const Color secondaryText = Color(0xFF8E8E93);
-  static const Color iconColor = Color(0xFFd5d5d5);
-  static const Color divider = Color(0xFF2C2C2C);
-  static const Color cursor = Color(0xFF3eb573);
-}
+import '../../core/theme/app_animations.dart';
+import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_radius.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_typography.dart';
 
 /// 现代输入栏 — 多行文本输入、发送按钮、Temperature/Max Tokens 调节面板
 ///
@@ -69,8 +69,8 @@ class _ModernInputBarState extends State<ModernInputBar> {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        color: _Colors.inputBarBg,
-        border: Border(top: BorderSide(color: _Colors.divider, width: 0.5)),
+        color: AppColors.bgTertiary,
+        border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
       ),
       child: SafeArea(
         child: Padding(
@@ -78,15 +78,19 @@ class _ModernInputBarState extends State<ModernInputBar> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_showOptions) _buildOptionsPanel(),
+              AnimatedSize(
+                duration: AppAnimations.page,
+                curve: AppAnimations.easeOutBack,
+                alignment: Alignment.topCenter,
+                child: _showOptions ? _buildOptionsPanel() : const SizedBox.shrink(),
+              ),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
                     child: CallbackShortcuts(
                       bindings: {
-                        const SingleActivator(LogicalKeyboardKey.enter):
-                            () {
+                        const SingleActivator(LogicalKeyboardKey.enter): () {
                           if (!widget.isLoading &&
                               widget.controller.text.trim().isNotEmpty) {
                             widget.onSend();
@@ -127,24 +131,24 @@ class _ModernInputBarState extends State<ModernInputBar> {
                             widget.onSend();
                           }
                         },
-                        cursorColor: _Colors.cursor,
-                        style: const TextStyle(
-                          color: _Colors.primaryText,
-                          fontSize: 15,
+                        cursorColor: AppColors.green,
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: AppTypography.bodyLg,
                         ),
                         decoration: InputDecoration(
                           filled: true,
-                          fillColor: _Colors.textFieldBg,
+                          fillColor: AppColors.bgElevated,
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: AppRadius.smAll,
                             borderSide: BorderSide.none,
                           ),
                           focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: AppRadius.smAll,
                             borderSide: BorderSide.none,
                           ),
                           enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: AppRadius.smAll,
                             borderSide: BorderSide.none,
                           ),
                           contentPadding: const EdgeInsets.symmetric(
@@ -157,56 +161,60 @@ class _ModernInputBarState extends State<ModernInputBar> {
                   ),
                   const SizedBox(width: 10),
                   // 有文本时显示绿色发送按钮，否则显示圆形加号按钮
-                  _hasText
-                      ? GestureDetector(
-                          onTap: widget.isLoading
-                              ? null
-                              : () => widget.onSend(),
-                          child: Container(
-                            height: 36,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: widget.isLoading
-                                  ? _Colors.cursor.withAlpha(120)
-                                  : _Colors.cursor,
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                            child: const Center(
-                              child: Text(
-                                '发送',
-                                style: TextStyle(
-                                  color: Color(0xFF2C2C2C),
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
+                  AnimatedSwitcher(
+                    duration: AppAnimations.quick,
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: AppAnimations.easeInOut,
+                    child: _hasText
+                        ? AppAnimations.scaleTap(
+                            onTap: widget.isLoading
+                                ? () {}
+                                : () => widget.onSend(),
+                            child: Container(
+                              key: const ValueKey('send'),
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: widget.isLoading
+                                    ? AppColors.green.withAlpha(120)
+                                    : AppColors.green,
+                              ),
+                              child: const Center(
+                                child: Icon(
+                                  Icons.arrow_upward,
+                                  color: Colors.white,
+                                  size: 20,
                                 ),
                               ),
                             ),
-                          ),
-                        )
-                      : _buildCircleIconButton(
-                          customPainter: null,
-                          icon: null,
-                          customWidget: Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: _Colors.iconColor,
-                                width: 1.5,
+                          )
+                        : _buildCircleIconButton(
+                            key: const ValueKey('plus'),
+                            customPainter: null,
+                            icon: null,
+                            customWidget: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: AppColors.textPrimary,
+                                  width: 1.0,
+                                ),
+                              ),
+                              child: const Center(
+                                child: FaIcon(
+                                  FontAwesomeIcons.plus,
+                                  color: AppColors.textPrimary,
+                                  size: 18,
+                                ),
                               ),
                             ),
-                            child: const Center(
-                              child: FaIcon(
-                                FontAwesomeIcons.plus,
-                                color: _Colors.iconColor,
-                                size: 18,
-                              ),
-                            ),
+                            onTap: () =>
+                                setState(() => _showOptions = !_showOptions),
                           ),
-                          onTap: () =>
-                              setState(() => _showOptions = !_showOptions),
-                        ),
+                  ),
                 ],
               ),
             ],
@@ -217,6 +225,7 @@ class _ModernInputBarState extends State<ModernInputBar> {
   }
 
   Widget _buildCircleIconButton({
+    Key? key,
     IconData? icon,
     CustomPainter? customPainter,
     double iconSize = 20,
@@ -225,18 +234,19 @@ class _ModernInputBarState extends State<ModernInputBar> {
     required VoidCallback onTap,
   }) {
     return GestureDetector(
+      key: key,
       onTap: onTap,
       child: Container(
-        width: 36,
-        height: 36,
+        width: 40,
+        height: 40,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          border: Border.all(color: _Colors.iconColor, width: 1.5),
+          border: Border.all(color: AppColors.textPrimary, width: 1.0),
         ),
         child:
             customWidget ??
             (icon != null
-                ? Icon(icon, color: _Colors.iconColor, size: iconSize)
+                ? Icon(icon, color: AppColors.textPrimary, size: iconSize)
                 : customPainter != null
                 ? CustomPaint(painter: customPainter, size: customPaintSize)
                 : null),
@@ -244,13 +254,14 @@ class _ModernInputBarState extends State<ModernInputBar> {
     );
   }
 
+  /// 参数选项面板 — Temperature 和 Max Tokens 滑块
   Widget _buildOptionsPanel() {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(AppSpacing.mdSm),
       decoration: BoxDecoration(
-        color: _Colors.textFieldBg,
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.bgElevated,
+        borderRadius: AppRadius.mdAll,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -260,19 +271,19 @@ class _ModernInputBarState extends State<ModernInputBar> {
               dense: true,
               leading: const Icon(
                 Icons.settings_applications,
-                color: _Colors.secondaryText,
+                color: AppColors.textSecondary,
                 size: 20,
               ),
               title: const Text(
                 '发送系统消息',
-                style: TextStyle(color: _Colors.primaryText, fontSize: 14),
+                style: TextStyle(color: AppColors.textPrimary, fontSize: AppTypography.body),
               ),
               onTap: () {
                 setState(() => _showOptions = false);
                 widget.onSystemMessage!();
               },
             ),
-          if (widget.onTemperatureChanged != null)
+          if (widget.onTemperatureChanged != null) ...[
             _buildSlider(
               label: 'Temperature',
               value: widget.temperature,
@@ -281,6 +292,11 @@ class _ModernInputBarState extends State<ModernInputBar> {
               divisions: 20,
               onChanged: widget.onTemperatureChanged!,
             ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Divider(height: 1, thickness: 0.5, color: AppColors.borderLight),
+            ),
+          ],
           if (widget.onMaxTokensChanged != null)
             _buildSlider(
               label: 'Max Tokens',
@@ -314,8 +330,8 @@ class _ModernInputBarState extends State<ModernInputBar> {
               Text(
                 label,
                 style: const TextStyle(
-                  color: _Colors.secondaryText,
-                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                  fontSize: AppTypography.caption,
                 ),
               ),
               Text(
@@ -323,8 +339,8 @@ class _ModernInputBarState extends State<ModernInputBar> {
                     ? value.toInt().toString()
                     : value.toStringAsFixed(1),
                 style: const TextStyle(
-                  color: Color(0xFF3eb573),
-                  fontSize: 12,
+                  color: AppColors.green,
+                  fontSize: AppTypography.caption,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -332,10 +348,10 @@ class _ModernInputBarState extends State<ModernInputBar> {
           ),
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              activeTrackColor: const Color(0xFF3eb573),
-              inactiveTrackColor: const Color(0xFF3C3C3C),
-              thumbColor: const Color(0xFF3eb573),
-              trackHeight: 3,
+              activeTrackColor: AppColors.green,
+              inactiveTrackColor: AppColors.borderLight,
+              thumbColor: AppColors.green,
+              trackHeight: 4,
             ),
             child: Slider(
               value: value,

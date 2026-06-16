@@ -1,5 +1,14 @@
+/// 导入预览对话框与参数定义
+///
+/// ImportPreviewDialog：显示导入文件中各类型数据的数量（新增/覆盖），用户确认后执行合并。
+/// ParamDef：子代理触发参数的元数据定义（标签、默认值、最小/最大值）。
+library;
+
 import 'package:flutter/material.dart';
+import '../../../core/theme/app_animations.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_typography.dart';
 
 /// 导入预览对话框 — 显示导入文件中各类型数据的数量和操作概览
 class ImportPreviewDialog extends StatelessWidget {
@@ -18,7 +27,7 @@ class ImportPreviewDialog extends StatelessWidget {
       backgroundColor: AppColors.surface,
       title: const Text(
         '导入数据预览',
-        style: TextStyle(color: AppColors.textPrimary, fontSize: 18),
+        style: TextStyle(color: AppColors.textPrimary, fontSize: AppTypography.title),
       ),
       content: SizedBox(
         width: double.maxFinite,
@@ -33,7 +42,7 @@ class ImportPreviewDialog extends StatelessWidget {
                 fontSize: 13,
               ),
             ),
-            const SizedBox(height: 12),
+            AppSpacing.vMDSm,
             ...entries.map((e) {
               final v = e.value as Map<String, dynamic>;
               final willInsert = v['willInsert'] as int? ?? 0;
@@ -43,37 +52,40 @@ class ImportPreviewDialog extends StatelessWidget {
               if (willUpdate > 0) parts.add('覆盖 $willUpdate');
               if (parts.isEmpty) return const SizedBox.shrink();
 
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 100,
-                      child: Text(
-                        v['label'] as String? ?? e.key,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
+              return AppAnimations.staggerItem(
+                index: entries.indexOf(e),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 100,
+                        child: Text(
+                          v['label'] as String? ?? e.key,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        parts.join('，'),
+                        style: TextStyle(
+                          color: willUpdate > 0
+                              ? AppColors.greenLight
+                              : AppColors.green,
                           fontSize: 13,
                         ),
                       ),
-                    ),
-                    Text(
-                      parts.join('，'),
-                      style: TextStyle(
-                        color: willUpdate > 0
-                            ? AppColors.greenLight
-                            : AppColors.green,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               );
             }),
-            const SizedBox(height: 12),
+            AppSpacing.vMDSm,
             const Text(
               '导入后请刷新页面以加载最新数据',
-              style: TextStyle(color: AppColors.textTertiary, fontSize: 12),
+              style: TextStyle(color: AppColors.textTertiary, fontSize: AppTypography.caption),
             ),
           ],
         ),
@@ -86,10 +98,13 @@ class ImportPreviewDialog extends StatelessWidget {
             style: TextStyle(color: AppColors.textTertiary),
           ),
         ),
-        ElevatedButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          style: ElevatedButton.styleFrom(backgroundColor: AppColors.green),
-          child: const Text('确认导入', style: TextStyle(color: Colors.black)),
+        AppAnimations.scaleTap(
+          onTap: () => Navigator.of(context).pop(true),
+          child: ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.green),
+            child: const Text('确认导入', style: TextStyle(color: Colors.black)),
+          ),
         ),
       ],
     );

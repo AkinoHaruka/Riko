@@ -2,9 +2,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'chat_provider.dart';
 
-/// 当前对话的背景样式
+/// 当前对话的背景样式 Provider
 ///
-/// 返回 conversation.background 的值，如 `solid:#1a1a2e` 或 `gradient:#a|#b|#c`
+/// 返回 conversation.background 的值，如 `solid:#1a1a2e` 或 `gradient:#a|#b|#c`。
+/// 监听 [activeConversationIdProvider] 和 [conversationsProvider] 变化自动更新。
 final activeConversationBackgroundProvider = Provider<String?>((ref) {
   final conversationId = ref.watch(activeConversationIdProvider);
   if (conversationId == null) return null;

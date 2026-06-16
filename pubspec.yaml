@@ -31,6 +31,9 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # 元注解（@visibleForTesting 等）
+  meta: ^1.17.0
+
   # 状态管理
   flutter_riverpod: ^2.6.1
   # 路由
@@ -82,6 +85,12 @@ dev_dependencies:
   # 代码生成
   build_runner: ^2.4.15
   json_serializable: ^6.9.4
+
+  # Mock 框架
+  mocktail: ^0.3.0
+
+  # 时间控制（重试逻辑测试）
+  fake_async: ^1.3.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

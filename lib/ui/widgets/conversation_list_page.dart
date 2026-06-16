@@ -1,10 +1,19 @@
+/// 对话列表页面 — 活跃对话的浏览与管理
+///
+/// 显示所有活跃对话，支持搜索过滤、新建对话、重命名、归档和删除操作。
+/// 点击对话项跳转到聊天页面，底部提供"查看归档"入口。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 
 import '../../core/theme/app_animations.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_radius.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_typography.dart';
+import '../../core/utils/time_formatters.dart';
 import '../../data/models/conversation.dart';
 
 /// 对话列表页面 — 显示所有对话，支持搜索、新建、重命名、归档和删除
@@ -66,7 +75,7 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
                     itemCount: filtered.length,
                     itemBuilder: (context, index) {
                       final conversation = filtered[index];
-                      return _buildConversationItem(conversation);
+                      return _buildConversationItem(conversation, index);
                     },
                   );
                 },
@@ -106,13 +115,13 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
               size: 18,
             ),
           ),
-          const SizedBox(width: 12),
+          AppSpacing.hMDSm,
           const Expanded(
             child: Text(
-              'Messages',
+              '消息',
               style: TextStyle(
                 color: AppColors.textPrimary,
-                fontSize: 20,
+                fontSize: AppTypography.headline,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -123,7 +132,7 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: AppRadius.mdAll,
               ),
               child: const Icon(
                 Icons.add,
@@ -143,14 +152,14 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.surface,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: AppRadius.mdAll,
           border: Border.all(color: AppColors.border),
         ),
         child: TextField(
           onChanged: (value) => setState(() => _searchQuery = value),
-          style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: AppTypography.body),
           decoration: const InputDecoration(
-            hintText: 'Search conversations...',
+            hintText: '搜索对话...',
             hintStyle: TextStyle(color: AppColors.textTertiary),
             prefixIcon: Icon(
               Icons.search,
@@ -165,114 +174,111 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
     );
   }
 
-  Widget _buildConversationItem(Conversation conversation) {
+  Widget _buildConversationItem(Conversation conversation, int index) {
     final isActive = conversation.id == widget.activeConversationId;
     final timeText = _formatTime(conversation.updatedAt);
 
-    return AppAnimations.scaleTap(
-      onTap: () {
-        widget.onSwitch(conversation.id);
-        context.push('/chat');
-      },
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-        decoration: BoxDecoration(
-          color: isActive ? AppColors.surfaceHover : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 2,
+    return AppAnimations.staggerItem(
+      index: index,
+      child: AppAnimations.scaleTap(
+        onTap: () {
+          widget.onSwitch(conversation.id);
+          context.push('/chat');
+        },
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          decoration: BoxDecoration(
+            color: isActive ? AppColors.surfaceHover : Colors.transparent,
+            borderRadius: AppRadius.smAll,
           ),
-          leading: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: isActive
-                  ? AppColors.green.withValues(alpha: 0.15)
-                  : AppColors.surface,
-              borderRadius: BorderRadius.circular(10),
+          child: ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 2,
             ),
-            child: Icon(
-              Icons.chat_outlined,
-              color: isActive ? AppColors.green : AppColors.textSecondary,
-              size: 20,
-            ),
-          ),
-          title: Text(
-            conversation.title,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: isActive ? AppColors.green : AppColors.textPrimary,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-              fontSize: 14,
-            ),
-          ),
-          subtitle: Text(
-            timeText,
-            style: const TextStyle(color: AppColors.textTertiary, fontSize: 11),
-          ),
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(
-              Icons.more_vert,
-              color: AppColors.textTertiary,
-              size: 18,
-            ),
-            color: AppColors.surface,
-            onSelected: (value) {
-              switch (value) {
-                case 'rename':
-                  _showRenameDialog(conversation.id, conversation.title);
-                case 'archive':
-                  widget.onArchive(conversation.id, true);
-                case 'delete':
-                  widget.onDelete(conversation.id);
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'rename',
-                child: Row(
-                  children: [
-                    Icon(Icons.edit, color: AppColors.textSecondary, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Rename',
-                      style: TextStyle(color: AppColors.textPrimary),
-                    ),
-                  ],
-                ),
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isActive
+                    ? AppColors.green.withValues(alpha: 0.15)
+                    : AppColors.surface,
+                borderRadius: AppRadius.mdAll,
               ),
-              const PopupMenuItem(
-                value: 'archive',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.archive,
-                      color: AppColors.textSecondary,
-                      size: 18,
-                    ),
-                    SizedBox(width: 8),
-                    Text(
-                      'Archive',
-                      style: TextStyle(color: AppColors.textPrimary),
-                    ),
-                  ],
-                ),
+              child: Icon(
+                Icons.chat_outlined,
+                color: isActive ? AppColors.green : AppColors.textSecondary,
+                size: 20,
               ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete, color: AppColors.error, size: 18),
-                    SizedBox(width: 8),
-                    Text('Delete', style: TextStyle(color: AppColors.error)),
-                  ],
-                ),
+            ),
+            title: Text(
+              conversation.title,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isActive ? AppColors.green : AppColors.textPrimary,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                fontSize: AppTypography.body,
               ),
-            ],
+            ),
+            subtitle: Text(
+              timeText,
+              style: const TextStyle(color: AppColors.textTertiary, fontSize: 11),
+            ),
+            trailing: PopupMenuButton<String>(
+              icon: const Icon(
+                Icons.more_vert,
+                color: AppColors.textTertiary,
+                size: 18,
+              ),
+              color: AppColors.surface,
+              onSelected: (value) {
+                switch (value) {
+                  case 'rename':
+                    _showRenameDialog(conversation.id, conversation.title);
+                  case 'archive':
+                    widget.onArchive(conversation.id, true);
+                  case 'delete':
+                    widget.onDelete(conversation.id);
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'rename',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.edit, color: AppColors.textSecondary, size: 18),
+                      AppSpacing.hSM,
+                      const Text('重命名', style: TextStyle(color: AppColors.textPrimary)),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'archive',
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.archive,
+                        color: AppColors.textSecondary,
+                        size: 18,
+                      ),
+                      AppSpacing.hSM,
+                      const Text('归档', style: TextStyle(color: AppColors.textPrimary)),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.delete, color: AppColors.error, size: 18),
+                      AppSpacing.hSM,
+                      const Text('删除', style: TextStyle(color: AppColors.error)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -289,19 +295,19 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
             size: 48,
             color: AppColors.textTertiary.withValues(alpha: 0.5),
           ),
-          const SizedBox(height: 12),
+          AppSpacing.vMDSm,
           Text(
-            'No conversations yet',
+            '暂无对话',
             style: TextStyle(
               color: AppColors.textTertiary.withValues(alpha: 0.7),
-              fontSize: 14,
+              fontSize: AppTypography.body,
             ),
           ),
-          const SizedBox(height: 16),
+          AppSpacing.vMD,
           ElevatedButton.icon(
             onPressed: widget.onCreate,
             icon: const Icon(Icons.add, size: 18),
-            label: const Text('New Conversation'),
+            label: const Text('新建对话'),
           ),
         ],
       ),
@@ -321,8 +327,8 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
           size: 20,
         ),
         title: const Text(
-          'View Archived',
-          style: TextStyle(color: AppColors.textTertiary, fontSize: 14),
+          '查看归档',
+          style: TextStyle(color: AppColors.textTertiary, fontSize: AppTypography.body),
         ),
         onTap: () {
           widget.onViewArchive!();
@@ -333,20 +339,20 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
 
   Future<void> _showRenameDialog(String id, String currentTitle) async {
     final controller = TextEditingController(text: currentTitle);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await AppAnimations.showSpringDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: AppRadius.lgAll),
         title: const Text(
-          'Rename Conversation',
+          '重命名对话',
           style: TextStyle(color: AppColors.textPrimary),
         ),
         content: TextField(
           controller: controller,
           style: const TextStyle(color: AppColors.textPrimary),
           decoration: const InputDecoration(
-            labelText: 'New title',
+            labelText: '新标题',
             labelStyle: TextStyle(color: AppColors.textSecondary),
           ),
           autofocus: true,
@@ -354,11 +360,11 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: const Text('取消'),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Save'),
+            child: const Text('保存'),
           ),
         ],
       ),
@@ -370,13 +376,6 @@ class _ConversationListPageState extends ConsumerState<ConversationListPage> {
   }
 
   String _formatTime(DateTime time) {
-    final local = time.toLocal();
-    final now = DateTime.now();
-    final diff = now.difference(local);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-    if (diff.inDays < 1) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return DateFormat('MM-dd').format(local);
+    return TimeFormatters.relativeTime(time);
   }
 }

@@ -1,4 +1,8 @@
 {
   "version": "0.2",
-  "words": ["Consolas", "Cascadia", "deepseek", "daos", "apikey", "prefs"]
+  "words": [
+    "Consolas", "Cascadia", "deepseek", "daos", "apikey", "prefs",
+    "riko", "RIKO", "conv", "modelcontextprotocol", "streamable", "Streamable",
+    "mytool", "ECONNREFUSED"
+  ]
 }

@@ -10,11 +10,24 @@ import 'chat_state.dart';
 import 'internal_event.dart';
 
 /// 监控记录管理 mixin — 管理 API 监控面板的记录、子代理活动和分页加载
+///
+/// 提供监控记录的追加、清空、分页加载，子代理活动到历史记录的转换，
+/// 以及 SSE 推送消息与乐观 UI 消息的同步清理。
+/// 被 [ChatNotifier] 混入使用。
 mixin ChatMonitorMixin on StateNotifier<ChatState> {
+  /// 远程聊天仓库，由混入类提供
   RemoteChatRepository get chatRepository;
+
+  /// Riverpod Ref，由混入类提供
   Ref get ref;
+
+  /// 安全读取 SharedPreferences 中的 String 值，由混入类提供
   String? getPrefString(SharedPreferences prefs, String key);
 
+  /// 向指定监控记录追加一个内部事件
+  ///
+  /// [monitorIndex] 为 [state.apiInputHistory] 中的索引位置，
+  /// 越界时静默忽略。
   void appendInternalEvent(
     String type,
     Map<String, dynamic> data,
@@ -50,17 +63,17 @@ mixin ChatMonitorMixin on StateNotifier<ChatState> {
     return sb.toString();
   }
 
+  /// 清除当前错误状态
   void clearError() {
     state = state.copyWith(clearError: true);
   }
 
-  void clearApiInputHistory() async {
+  /// 清空当前会话的所有监控记录（前端状态 + 后端数据库）
+  Future<void> clearApiInputHistory() async {
     final conversationId = ref.read(activeConversationIdProvider);
     if (conversationId != null) {
       try {
-        await chatRepository.deleteMonitorRecordsByConversation(
-          conversationId,
-        );
+        await chatRepository.deleteMonitorRecordsByConversation(conversationId);
       } catch (e) {
         debugPrint('清空监控记录失败: $e');
       }
@@ -143,9 +156,7 @@ mixin ChatMonitorMixin on StateNotifier<ChatState> {
       internalEvents: toolCallEvents,
     );
 
-    state = state.copyWith(
-      apiInputHistory: [record, ...state.apiInputHistory],
-    );
+    state = state.copyWith(apiInputHistory: [record, ...state.apiInputHistory]);
 
     final now = DateTime.now();
     if (subType == 'session_memory') {
@@ -242,6 +253,7 @@ mixin ChatMonitorMixin on StateNotifier<ChatState> {
       final currentCount = state.apiInputHistory.length;
 
       if (currentCount >= totalCount) {
+        if (!mounted) return;
         state = state.copyWith(
           hasMoreMonitorRecords: false,
           isLoadingMoreMonitor: false,
@@ -262,6 +274,7 @@ mixin ChatMonitorMixin on StateNotifier<ChatState> {
           .toList();
 
       final newHistory = [...state.apiInputHistory, ...moreRecords];
+      if (!mounted) return;
       state = state.copyWith(
         apiInputHistory: newHistory,
         hasMoreMonitorRecords: newHistory.length < totalCount,

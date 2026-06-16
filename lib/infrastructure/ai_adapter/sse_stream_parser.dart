@@ -1,3 +1,19 @@
+/// SSE 流解析器模块
+///
+/// 将后端推送的字节流解析为结构化的 [StreamChunk] 序列。
+/// 是 AI 对话流式响应的核心解析层，连接 Dio 响应流与上层 ChatNotifier。
+///
+/// 支持两种 SSE 数据格式：
+/// 1. **OpenAI/DeepSeek 原始格式**：choices[0].delta.content / reasoning_content / usage
+/// 2. **Python 后端简化格式**：通过 type 字段区分 content / reasoning_content / finish / usage / error / tool_call / compact 等
+///
+/// 协议细节：
+/// - SSE 规范：每条数据以 "data: " 前缀开头，以空行分隔
+/// - 流结束标记：data: [DONE]
+/// - 心跳保活：": keep-alive" 注释行（DeepSeek 限速期间持续发送）
+/// - 编码处理：手动逐块 UTF-8 解码，兼容 Flutter Web 端（避免 Utf8Decoder 作为 StreamTransformer 的类型问题）
+library;
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -37,7 +53,7 @@ Stream<StreamChunk> parseSseStream(
     }
   }
 
-  // 处理缓冲区中剩余的不完整行
+  // 处理缓冲区中剩余的不完整行（服务器未以换行符结尾的情况）
   if (buffer.trim().isNotEmpty) {
     if (onRawSseLine != null) {
       onRawSseLine(buffer);
@@ -54,7 +70,7 @@ Stream<StreamChunk> _parseLine(String line) {
     return const Stream<StreamChunk>.empty();
   }
 
-  // 跳过 [DONE] 标记
+  // [DONE] 是 SSE 流的结束标记
   if (trimmed == '[DONE]') {
     return Stream.value(const StreamChunk(isFinished: true));
   }
@@ -64,6 +80,7 @@ Stream<StreamChunk> _parseLine(String line) {
     return const Stream<StreamChunk>.empty();
   }
 
+  // 非 data: 前缀的行不符合 SSE 规范，直接忽略
   if (!trimmed.startsWith('data:')) {
     return const Stream<StreamChunk>.empty();
   }
@@ -85,7 +102,7 @@ Stream<StreamChunk> _parseLine(String line) {
     // 否则使用原始 OpenAI 格式解析
     return _parseOpenAIFormat(json);
   } on FormatException {
-    // JSON 解析失败时，返回原始数据作为 content
+    // JSON 解析失败时，返回原始数据作为 content（可能是非标准 SSE 输出）
     return Stream.value(StreamChunk(content: dataContent));
   }
 }
@@ -98,6 +115,11 @@ Stream<StreamChunk> _parseLine(String line) {
 /// - finish: 流结束标记，携带 finish_reason
 /// - usage: Token 使用统计
 /// - error: 错误信息
+/// - tool_call: 工具调用信息
+/// - compact: 上下文压缩信息
+/// - session_notes_init: 会话笔记初始化
+/// - full_request: 完整请求 JSON（调试用）
+/// - connected: 连接确认
 Stream<StreamChunk> _parseSimplifiedFormat(Map<String, dynamic> json) {
   final type = json['type'] as String?;
 
@@ -142,6 +164,7 @@ Stream<StreamChunk> _parseSimplifiedFormat(Map<String, dynamic> json) {
         toolCallInfo = ToolCallInfo.fromJson(data);
       }
       final content = json['content'] as String? ?? '';
+      // 优先使用外层 content 作为摘要，回退到 data.summary
       if (toolCallInfo != null) {
         toolCallInfo = ToolCallInfo(
           tools: toolCallInfo.tools,
@@ -195,7 +218,7 @@ Stream<StreamChunk> _parseSimplifiedFormat(Map<String, dynamic> json) {
 ///
 /// 字段结构：choices[0].delta.content / reasoning_content / finish_reason / usage
 Stream<StreamChunk> _parseOpenAIFormat(Map<String, dynamic> json) {
-  // 解析 usage 字段（通常在最后一个数据块中返回）
+  // usage 字段通常在最后一个数据块中返回
   TokenUsage? usage;
   final usageJson = json['usage'] as Map<String, dynamic>?;
   if (usageJson != null) {
@@ -204,7 +227,7 @@ Stream<StreamChunk> _parseOpenAIFormat(Map<String, dynamic> json) {
 
   final choices = json['choices'] as List<dynamic>?;
   if (choices == null || choices.isEmpty) {
-    // 可能只有 usage 字段，没有 choices
+    // 可能只有 usage 字段，没有 choices（最终统计块）
     if (usage != null) {
       return Stream.value(StreamChunk(usage: usage));
     }
@@ -217,6 +240,7 @@ Stream<StreamChunk> _parseOpenAIFormat(Map<String, dynamic> json) {
   }
 
   final finishReason = firstChoice['finish_reason'] as String?;
+  // DeepSeek 偶尔返回字符串 "null" 而非 null，需一并排除
   final isFinished = finishReason != null && finishReason != 'null';
 
   final delta = firstChoice['delta'] as Map<String, dynamic>?;

@@ -1,4 +1,9 @@
-import 'dart:async';
+/// 聊天页面 — 应用核心交互入口
+///
+/// 负责分割面板布局管理、WebSocket 事件订阅、代理操作（压缩/记忆/梦境）。
+/// 宽屏时自动切换为左右分栏（聊天 + 终端面板），窄屏时仅显示聊天区域。
+library;
+
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -9,27 +14,25 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/di/chat_background_provider.dart';
 import '../core/di/chat_provider.dart';
-import '../core/di/chat_search_provider.dart';
 import '../core/di/providers.dart';
 import '../core/di/settings_cache.dart';
 import '../core/di/toast_provider.dart';
 import '../core/theme/app_animations.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/app_radius.dart';
+import '../core/theme/app_spacing.dart';
 import '../data/models/chat_message.dart';
-import '../infrastructure/websocket_client.dart';
-import 'widgets/draggable_splitter.dart';
-import 'widgets/dynamic_island/dynamic_island.dart';
+import 'chat/chat_column.dart';
+import 'chat/chat_popup_menu.dart';
+import 'chat/websocket_listener_mixin.dart';
 import 'widgets/avatar/avatar_crop_page.dart';
 import 'widgets/avatar/avatar_provider.dart';
 import 'widgets/background/background_picker.dart';
-import 'widgets/message_bubble.dart';
-import 'widgets/modern_input_bar.dart';
-import 'widgets/search/chat_search_bar.dart';
+import 'widgets/draggable_splitter.dart';
+import 'widgets/dynamic_island/dynamic_island.dart';
 import 'widgets/terminal_panel.dart';
 
 /// 聊天页面 — 核心交互入口
-///
-/// 负责消息列表渲染、SSE 流式输出展示、子代理进度面板、分割面板布局管理、WebSocket 事件订阅。
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
 
@@ -38,25 +41,30 @@ class ChatPage extends ConsumerStatefulWidget {
 }
 
 class _ChatPageState extends ConsumerState<ChatPage>
-    with WidgetsBindingObserver {
-  final _messageController = TextEditingController();
-  final _scrollController = ScrollController();
-  bool _hasInitialScrolled = false;
-  double _temperature = 0.7;
-  int _maxTokens = 384000;
+    with WidgetsBindingObserver, WebSocketListenerMixin<ChatPage> {
   bool _isSessionMemoryLoading = false;
   bool _isCompactLoading = false;
   bool _isDreamLoading = false;
   bool _isSearchVisible = false;
-  final List<Map<String, dynamic>> _subAgentActivities = [];
-  StreamSubscription<WebSocketEvent>? _wsSub;
+  int _scrollToBottomRequest = 0;
+
+  /// 上一次键盘高度，用于检测软键盘弹出/收起
   double _lastViewInsetBottom = 0;
+
+  /// ref.listen 注册标记，避免重复注册
+  bool _listenersRegistered = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 延迟到首帧后注册 ref.listen，因为 initState 中 ref 尚不可用
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _registerListeners();
+    });
     Future.microtask(() async {
+      // 初始化面板比例、设置缓存、代理会话
       await ref.read(panelRatioProvider.notifier).init();
       if (!mounted) return;
       await ref.read(settingsCacheInitProvider.future);
@@ -71,60 +79,45 @@ class _ChatPageState extends ConsumerState<ChatPage>
         }
       });
       if (!mounted) return;
-      // connect() 由 webSocketClientProvider 在 initReady 后自动调用
-      final wsClient = ref.read(webSocketClientProvider);
-      _wsSub = wsClient.events.listen((event) {
-        if (event.type == 'session_memory_activity' ||
-            event.type == 'compact_activity' ||
-            event.type == 'dream_activity') {
-          final activity = Map<String, dynamic>.from(event.payload);
-          activity['activity_type'] = switch (event.type) {
-            'session_memory_activity' => 'session_memory',
-            'compact_activity' => 'compact',
-            'dream_activity' => 'dream',
-            _ => event.type,
-          };
-          if (mounted) {
-            setState(() {
-              _subAgentActivities.insert(0, activity);
-              if (_subAgentActivities.length > 20) {
-                _subAgentActivities.removeLast();
-              }
-            });
-            if (activity['trace'] != null && mounted) {
-              ref
-                  .read(chatNotifierProvider.notifier)
-                  .addSubAgentActivityToHistory(activity);
-              ref
-                  .read(chatNotifierProvider.notifier)
-                  .saveSubAgentOutputToConversation(activity);
-            }
-            if (event.type == 'dream_activity' && mounted) {
-              setState(() => _isDreamLoading = false);
-
-              final status = activity['status'] as String?;
-              if (status == 'completed') {
-                final sessionsReviewed = activity['sessionsReviewed'];
-                ref.read(toastProvider.notifier).show(
-                      '梦境整理完成 (审查 $sessionsReviewed 个会话)',
-                    );
-              }
-            }
-          }
-        }
-      });
+      // 初始化 WebSocket 监听
+      initWebSocketListener();
     });
   }
 
   @override
+  void onWebSocketActivity(Map<String, dynamic> activity, String eventType) {
+    if (eventType == 'dream_activity') {
+      setState(() => _isDreamLoading = false);
+      final status = activity['status'] as String?;
+      if (status == 'completed') {
+        final sessionsReviewed = activity['sessionsReviewed'];
+        ref
+            .read(toastProvider.notifier)
+            .show('梦境整理完成 (审查 $sessionsReviewed 个会话)');
+      }
+    }
+  }
+
+  /// 注册 ref.listen（设置变更同步、会话切换重置），仅执行一次
+  void _registerListeners() {
+    if (_listenersRegistered) return;
+    _listenersRegistered = true;
+    // 设置变更时同步更新代理参数
+    ref.listen(settingsCacheProvider, (prev, next) {
+      ref.read(chatNotifierProvider.notifier).updateAgentParams();
+    });
+    // 切换会话时无需重置滚动标记，ChatMessageList 内部管理
+    ref.listen(activeConversationIdProvider, (prev, next) {});
+  }
+
+  @override
   void dispose() {
-    _wsSub?.cancel();
+    disposeWebSocketListener();
     WidgetsBinding.instance.removeObserver(this);
-    _messageController.dispose();
-    _scrollController.dispose();
     super.dispose();
   }
 
+  /// 监听窗口尺寸变化（如软键盘弹出），触发重建以调整布局
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
@@ -138,32 +131,18 @@ class _ChatPageState extends ConsumerState<ChatPage>
     });
   }
 
-  /// 滚动消息列表到底部（新消息到达时调用）
-  void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: AppAnimations.normal,
-        curve: AppAnimations.easeOutExpo,
-      );
-    }
-  }
-
-  Future<void> _sendMessage() async {
-    final text = _messageController.text.trim();
+  /// 发送消息 — 处理 /compact 命令和普通消息发送
+  Future<void> _sendMessage(String text) async {
     if (text.toLowerCase().startsWith('/compact')) {
-      _messageController.clear();
       final parts = text.trim().split(' ');
-      final customInstructions =
-          parts.length > 1 ? parts.sublist(1).join(' ') : null;
+      final customInstructions = parts.length > 1
+          ? parts.sublist(1).join(' ')
+          : null;
       await _manualCompact(customInstructions: customInstructions);
       return;
     }
-    if (text.isEmpty) return;
-
-    _messageController.clear();
     await ref.read(chatNotifierProvider.notifier).sendMessage(text);
-    Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
+    setState(() => _scrollToBottomRequest++);
     await _checkCompactStatus();
   }
 
@@ -256,17 +235,19 @@ class _ChatPageState extends ConsumerState<ChatPage>
           _showTokenWarning();
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[ChatPage] checkCompactStatus failed: $e');
+    }
   }
 
   void _showTokenWarning() {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 5),
-        content: const Row(
+        content: Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: Color(0xFFFFA500)),
-            SizedBox(width: 8),
+            Icon(Icons.warning_amber_rounded, color: AppColors.warning),
+            AppSpacing.hSM,
             Expanded(
               child: Text(
                 'Context nearing token limit. Use /compact to compress.',
@@ -290,6 +271,23 @@ class _ChatPageState extends ConsumerState<ChatPage>
     };
   }
 
+  /// 弹出菜单项选择处理：头像、搜索、背景、清空聊天记录
+  void _onPopupSelected(String value) {
+    switch (value) {
+      case 'avatar':
+        _pickAndCropAvatar();
+      case 'remove_avatar':
+        _removeAvatar();
+      case 'search':
+        setState(() => _isSearchVisible = true);
+      case 'background':
+        _showBackgroundPicker();
+      case 'clear_all':
+        _clearCurrentAgentHistory();
+    }
+  }
+
+  /// 选择并裁剪头像图片，保存到本地
   Future<void> _pickAndCropAvatar() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
@@ -302,8 +300,13 @@ class _ChatPageState extends ConsumerState<ChatPage>
     if (!mounted) return;
     final cropped = await Navigator.push<Uint8List>(
       context,
-      MaterialPageRoute(
-        builder: (_) => AvatarCropPage(imageBytes: bytes),
+      PageRouteBuilder<Uint8List>(
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return AvatarCropPage(imageBytes: bytes);
+        },
+        transitionsBuilder: AppAnimations.slideInFromBottom,
+        transitionDuration: AppAnimations.page,
+        reverseTransitionDuration: AppAnimations.normal,
       ),
     );
     if (cropped == null || !mounted) return;
@@ -320,15 +323,19 @@ class _ChatPageState extends ConsumerState<ChatPage>
     }
   }
 
+  /// 清空当前代理的聊天记录，删除对话和监控记录后重建新对话
   Future<void> _clearCurrentAgentHistory() async {
     final agentType = ref.read(activeAgentTypeProvider);
     final agentTitle = _resolveTitle(agentType);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await AppAnimations.showSpringDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.bgElevated,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('清空 $agentTitle', style: const TextStyle(color: AppColors.error)),
+        shape: RoundedRectangleBorder(borderRadius: AppRadius.lgAll),
+        title: Text(
+          '清空 $agentTitle',
+          style: const TextStyle(color: AppColors.error),
+        ),
         content: Text(
           '此操作将清空「$agentTitle」的所有消息，不可恢复。',
           style: const TextStyle(color: AppColors.textSecondary),
@@ -380,74 +387,11 @@ class _ChatPageState extends ConsumerState<ChatPage>
     }
   }
 
-  List<PopupMenuEntry<String>> _buildPopupMenuItems() {
-    final hasAvatar = ref.watch(mainAgentAvatarProvider).valueOrNull != null;
-    return [
-      const PopupMenuItem(
-        value: 'avatar',
-        child: Row(
-          children: [
-            Icon(Icons.face, color: AppColors.textSecondary, size: 18),
-            SizedBox(width: 10),
-            Text('更换头像', style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
-          ],
-        ),
-      ),
-      if (hasAvatar)
-        const PopupMenuItem(
-          value: 'remove_avatar',
-          child: Row(
-            children: [
-              Icon(Icons.face_retouching_off, color: AppColors.error, size: 18),
-              SizedBox(width: 10),
-              Text('移除头像', style: TextStyle(color: AppColors.error, fontSize: 14)),
-            ],
-          ),
-        ),
-      const PopupMenuDivider(),
-      const PopupMenuItem(
-        value: 'search',
-        child: Row(
-          children: [
-            Icon(Icons.search, color: AppColors.textSecondary, size: 18),
-            SizedBox(width: 10),
-            Text('搜索消息', style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
-          ],
-        ),
-      ),
-      const PopupMenuDivider(),
-      const PopupMenuItem(
-        value: 'background',
-        child: Row(
-          children: [
-            Icon(Icons.wallpaper, color: AppColors.textSecondary, size: 18),
-            SizedBox(width: 10),
-            Text('聊天背景', style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
-          ],
-        ),
-      ),
-      const PopupMenuDivider(),
-      const PopupMenuItem(
-        value: 'clear_all',
-        child: Row(
-          children: [
-            Icon(Icons.delete_sweep, color: AppColors.error, size: 18),
-            SizedBox(width: 10),
-            Text('清空聊天记录', style: TextStyle(color: AppColors.error, fontSize: 14)),
-          ],
-        ),
-      ),
-    ];
-  }
-
-  void _showSearchBar() {
-    setState(() => _isSearchVisible = true);
-  }
-
+  /// 打开聊天背景选择对话框
   Future<void> _showBackgroundPicker() async {
     final conversationId = ref.read(activeConversationIdProvider);
     if (conversationId == null) return;
-    final result = await showDialog<String>(
+    final result = await AppAnimations.showSpringDialog<String>(
       context: context,
       builder: (context) => const BackgroundPicker(),
     );
@@ -460,6 +404,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
   @override
   Widget build(BuildContext context) {
+    // 监听当前活跃会话和代理类型
     final activeConversationId = ref.watch(activeConversationIdProvider);
     final activeAgentType = ref.watch(activeAgentTypeProvider);
     final chatState = ref.watch(chatNotifierProvider);
@@ -467,12 +412,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
         ? ref.watch(conversationMessagesProvider(activeConversationId))
         : null;
 
-    ref.listen(settingsCacheProvider, (prev, next) {
-      ref.read(chatNotifierProvider.notifier).updateAgentParams();
-    });
-
     return LayoutBuilder(
       builder: (context, constraints) {
+        // 宽高比 > 1.0 时启用左右分栏布局
         final ratio =
             constraints.maxWidth /
             constraints.maxHeight.clamp(1, double.infinity);
@@ -526,7 +468,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                       ? () => _manualCompact()
                       : null,
                   isCompactEnabled: activeConversationId != null,
-                  subAgentActivities: _subAgentActivities,
+                  subAgentActivities: subAgentActivities,
                   hasActiveConversation: activeConversationId != null,
                   isSessionMemoryLoading: _isSessionMemoryLoading,
                   isCompactLoading: _isCompactLoading,
@@ -554,6 +496,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     );
   }
 
+  /// 构建聊天区域 Scaffold：包含标题栏、消息列表、输入栏
   Widget _buildChatScaffold(
     ChatState chatState,
     AsyncValue<List<ChatMessage>>? messagesAsync,
@@ -572,25 +515,29 @@ class _ChatPageState extends ConsumerState<ChatPage>
       // 消息数进度
       final msgProgress = chatState.memoryMinMessages > 0
           ? (chatState.messageCount % chatState.memoryMinMessages) /
-              chatState.memoryMinMessages
+                chatState.memoryMinMessages
           : 0.0;
       // Token 增长进度
       final tokenGrowth = chatState.tokenCount - chatState.lastMemoryTokenCount;
       final tokenProgress = chatState.memoryMinTokensBetweenUpdate > 0
-          ? (tokenGrowth / chatState.memoryMinTokensBetweenUpdate).clamp(0.0, 1.0)
+          ? (tokenGrowth / chatState.memoryMinTokensBetweenUpdate).clamp(
+              0.0,
+              1.0,
+            )
           : 0.0;
       // 取较快的阈值作为实际进度
-      memoryProgress = msgProgress > tokenProgress ? msgProgress : tokenProgress;
+      memoryProgress = msgProgress > tokenProgress
+          ? msgProgress
+          : tokenProgress;
     }
     if (chatState.compactTriggerTokens > 0) {
-      compactProgress =
-          (chatState.tokenCount / chatState.compactTriggerTokens).clamp(0.0, 1.0);
+      compactProgress = (chatState.tokenCount / chatState.compactTriggerTokens)
+          .clamp(0.0, 1.0);
     }
     if (chatState.lastDreamAt != null && chatState.dreamMinHours > 0) {
       final hoursSince =
           now.difference(chatState.lastDreamAt!).inMinutes / 60.0;
-      dreamProgress =
-          (hoursSince / chatState.dreamMinHours).clamp(0.0, 1.0);
+      dreamProgress = (hoursSince / chatState.dreamMinHours).clamp(0.0, 1.0);
     }
 
     final island = DynamicIsland(
@@ -611,7 +558,10 @@ class _ChatPageState extends ConsumerState<ChatPage>
       final colors = background
           .substring(9)
           .split('|')
-          .map((h) => Color(int.tryParse(h.replaceFirst('#', '0xFF')) ?? 0xFF111111))
+          .map(
+            (h) =>
+                Color(int.tryParse(h.replaceFirst('#', '0xFF')) ?? 0xFF111111),
+          )
           .toList();
       bgBoxDecoration = BoxDecoration(
         gradient: LinearGradient(
@@ -634,7 +584,11 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     IconButton(
-                      icon: const FaIcon(FontAwesomeIcons.chevronLeft, color: AppColors.textPrimary, size: 20),
+                      icon: const FaIcon(
+                        FontAwesomeIcons.chevronLeft,
+                        color: AppColors.textPrimary,
+                        size: 20,
+                      ),
                       onPressed: () => context.pop(),
                     ),
                     Expanded(
@@ -643,27 +597,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                         child: island,
                       ),
                     ),
-                    PopupMenuButton<String>(
-                      icon: const FaIcon(FontAwesomeIcons.ellipsis, color: AppColors.textPrimary),
-                      color: AppColors.surface,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      offset: const Offset(0, 40),
-                      onSelected: (value) {
-                        switch (value) {
-                          case 'avatar':
-                            _pickAndCropAvatar();
-                          case 'remove_avatar':
-                            _removeAvatar();
-                          case 'search':
-                            _showSearchBar();
-                          case 'background':
-                            _showBackgroundPicker();
-                          case 'clear_all':
-                            _clearCurrentAgentHistory();
-                        }
-                      },
-                      itemBuilder: (context) => _buildPopupMenuItems(),
-                    ),
+                    ChatPopupMenuButton(onSelected: _onPopupSelected),
                   ],
                 ),
               )
@@ -673,42 +607,39 @@ class _ChatPageState extends ConsumerState<ChatPage>
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const FaIcon(FontAwesomeIcons.chevronLeft, color: AppColors.textPrimary, size: 20),
+                      icon: const FaIcon(
+                        FontAwesomeIcons.chevronLeft,
+                        color: AppColors.textPrimary,
+                        size: 20,
+                      ),
                       onPressed: () => context.pop(),
                     ),
                     Expanded(
                       child: Text(
                         _resolveTitle(activeAgentType),
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.textPrimary, fontSize: 17, fontWeight: FontWeight.w600),
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                    PopupMenuButton<String>(
-                      icon: const FaIcon(FontAwesomeIcons.ellipsis, color: AppColors.textPrimary),
-                      color: AppColors.surface,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      offset: const Offset(0, 40),
-                      onSelected: (value) {
-                        switch (value) {
-                          case 'avatar':
-                            _pickAndCropAvatar();
-                          case 'remove_avatar':
-                            _removeAvatar();
-                          case 'search':
-                            _showSearchBar();
-                          case 'background':
-                            _showBackgroundPicker();
-                          case 'clear_all':
-                            _clearCurrentAgentHistory();
-                        }
-                      },
-                      itemBuilder: (context) => _buildPopupMenuItems(),
-                    ),
+                    ChatPopupMenuButton(onSelected: _onPopupSelected),
                   ],
                 ),
               ),
             Expanded(
-              child: _buildChatColumn(chatState, messagesAsync, activeConversationId, isMainAgent),
+              child: ChatColumn(
+                chatState: chatState,
+                messagesAsync: messagesAsync,
+                activeConversationId: activeConversationId,
+                isMainAgent: isMainAgent,
+                isSearchVisible: _isSearchVisible,
+                onCloseSearch: () => setState(() => _isSearchVisible = false),
+                onSendMessage: _sendMessage,
+                scrollToBottomRequest: _scrollToBottomRequest,
+              ),
             ),
           ],
         ),
@@ -719,429 +650,4 @@ class _ChatPageState extends ConsumerState<ChatPage>
     }
     return scaffold;
   }
-
-  Widget _buildMessageList(
-    AsyncValue<List<ChatMessage>>? messagesAsync,
-    ChatState chatState,
-  ) {
-    if (messagesAsync?.hasValue == true &&
-        chatState.pendingMessages.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ref.read(chatNotifierProvider.notifier).clearPendingIfMatched();
-        }
-      });
-    }
-
-    return messagesAsync?.when(
-          data: (messages) {
-            if (messages.isEmpty &&
-                chatState.pendingMessages.isEmpty &&
-                !chatState.isLoading) {
-              return const Center(
-                child: Text(
-                  'Send your first message to start',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-              );
-            }
-            final allMessages = _mergeAndSort(messages, chatState);
-            final items = _buildRenderItems(allMessages, chatState, ref);
-            if (!_hasInitialScrolled && items.isNotEmpty) {
-              _hasInitialScrolled = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _scrollToBottom();
-              });
-            }
-            return ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: items.length,
-              itemBuilder: (context, index) => items[index].build(context),
-            );
-          },
-          loading: () => const Center(
-            child: CircularProgressIndicator(color: AppColors.success),
-          ),
-          error: (error, _) => Center(
-            child: Text(
-              'Failed to load messages: $error',
-              style: const TextStyle(color: AppColors.error),
-            ),
-          ),
-        ) ??
-        const Center(
-          child: CircularProgressIndicator(color: AppColors.success),
-        );
-  }
-
-  /// 合并轮询消息和待处理消息（乐观 UI），去除重复 ID
-  List<ChatMessage> _mergeAndSort(
-    List<ChatMessage> polled,
-    ChatState chatState,
-  ) {
-    final seen = <String>{};
-    final result = <ChatMessage>[];
-
-    for (final m in polled) {
-      seen.add(m.id);
-      result.add(m);
-    }
-    for (final p in chatState.pendingMessages) {
-      if (seen.contains(p.id)) continue;
-      result.add(p);
-    }
-
-    final sid = chatState.streamingAssistantMessageId;
-    if (sid != null && !seen.contains(sid) && chatState.isLoading) {
-      result.add(
-        ChatMessage(
-          id: sid,
-          conversationId: polled.isNotEmpty ? polled.first.conversationId : '',
-          role: 'assistant',
-          content: '',
-          reasoningContent: null,
-          isCompactSummary: false,
-          createdAt: DateTime.now(),
-        ),
-      );
-    }
-
-    result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    return result;
-  }
-
-  /// 构建渲染项列表：插入时间分隔器、过滤系统消息、绑定流式内容
-  List<_RenderItem> _buildRenderItems(
-    List<ChatMessage> messages,
-    ChatState chatState,
-    WidgetRef ref,
-  ) {
-    final avatarBytes = ref.watch(mainAgentAvatarProvider).valueOrNull;
-    final searchState = _isSearchVisible ? ref.watch(chatSearchProvider) : null;
-    final searchMatchList = searchState?.hasMatches == true
-        ? searchState!.matchIndices
-        : <int>[];
-    final searchMatchSet = searchMatchList.toSet();
-    final currentSearchIndex = searchState?.currentMatchIndex;
-    final searchQuery = searchState?.isActive == true ? searchState!.query : null;
-
-    // 搜索激活时，只保留匹配消息及其前后各 2 条上下文
-    List<ChatMessage> filteredMessages;
-    Map<int, int> sourceIndexToFiltered; // source index -> filtered index
-    if (searchQuery != null && searchMatchSet.isNotEmpty) {
-      final keepIndices = <int>{};
-      for (final mi in searchMatchSet) {
-        for (int j = (mi - 2).clamp(0, messages.length - 1);
-            j <= (mi + 2).clamp(0, messages.length - 1);
-            j++) {
-          keepIndices.add(j);
-        }
-      }
-      filteredMessages = [];
-      sourceIndexToFiltered = {};
-      for (int i = 0; i < messages.length; i++) {
-        if (keepIndices.contains(i)) {
-          sourceIndexToFiltered[i] = filteredMessages.length;
-          filteredMessages.add(messages[i]);
-        }
-      }
-    } else {
-      filteredMessages = messages;
-      sourceIndexToFiltered = {};
-      for (int i = 0; i < messages.length; i++) {
-        sourceIndexToFiltered[i] = i;
-      }
-    }
-    // source index → filtered index 反向映射
-    final filteredIndexToSource = <int, int>{};
-    for (final e in sourceIndexToFiltered.entries) {
-      filteredIndexToSource[e.value] = e.key;
-    }
-
-    final items = <_RenderItem>[];
-    DateTime? lastTime;
-
-    for (int i = 0; i < filteredMessages.length; i++) {
-      final message = filteredMessages[i];
-
-      if (message.role == 'system') {
-        final content = message.content;
-        if (content.contains('<session-memory-update>')) {
-          continue;
-        }
-      }
-      if (message.role == 'system' &&
-          message.compactMetadata != null &&
-          message.compactMetadata!.contains('compact_boundary')) {
-        continue;
-      }
-      if (message.isCompactSummary &&
-          message.role == 'user' &&
-          message.content.contains('此会话从之前的对话继续')) {
-        continue;
-      }
-
-      if (lastTime == null ||
-          message.createdAt.difference(lastTime).inMinutes > 5) {
-        items.add(
-          _RenderItem((_) => TimeSeparator(dateTime: message.createdAt)),
-        );
-      }
-      lastTime = message.createdAt;
-
-      final isStreamingTarget =
-          message.id == chatState.streamingAssistantMessageId;
-      final animateEntrance = !message.id.startsWith('-') && !isStreamingTarget;
-
-      final isCompactBoundary =
-          message.isCompactSummary &&
-          i + 1 < filteredMessages.length &&
-          !filteredMessages[i + 1].isCompactSummary;
-
-      final sourceIdx = filteredIndexToSource[i] ?? -1;
-      final isMatch = searchMatchSet.contains(sourceIdx);
-      final isFocused = isMatch &&
-          currentSearchIndex != null &&
-          currentSearchIndex < searchMatchList.length &&
-          searchMatchList[currentSearchIndex] == sourceIdx;
-
-      // 段落拆分：AI 多段落回复（以空行分隔）拆成独立气泡+头像
-      final isAssistant = message.role == 'assistant';
-      final shouldSplit = isAssistant &&
-          searchQuery == null &&
-          !message.isCompactSummary;
-
-      if (shouldSplit) {
-        final rawContent = isStreamingTarget
-            ? chatState.streamingContent
-            : message.content;
-        final normalized = rawContent.replaceAll('\r\n', '\n');
-
-        // 包含代码块（```）的消息不拆分，避免破坏 markdown 结构导致渲染断言失败
-        final hasCodeFence = normalized.contains('```');
-
-        if (!hasCodeFence && normalized.contains('\n\n')) {
-          final parts = normalized.split(RegExp(r'\n\n+'));
-          while (parts.isNotEmpty && parts.last.isEmpty) {
-            parts.removeLast();
-          }
-          if (parts.length >= 2) {
-            final baseOnDelete =
-                !message.id.startsWith('-') && !isStreamingTarget
-                    ? () => ref
-                        .read(chatNotifierProvider.notifier)
-                        .deleteMessage(message.id)
-                    : null;
-
-            final streamingDone = !isStreamingTarget ||
-                RegExp(r'\n\n+$').hasMatch(normalized);
-            final doneCount = streamingDone ? parts.length : parts.length - 1;
-
-            for (int p = 0; p < doneCount; p++) {
-              final speakContent = parts[p].trimRight();
-              items.add(_buildParagraphItem(
-                role: message.role,
-                content: speakContent,
-                reasoningContent: p == 0
-                    ? (isStreamingTarget
-                        ? (chatState.streamingReasoningContent.isNotEmpty
-                            ? chatState.streamingReasoningContent
-                            : null)
-                        : message.reasoningContent)
-                    : null,
-                isStreaming: false,
-                animateEntrance: p == 0 && animateEntrance,
-                createdAt: message.createdAt,
-                onDelete: baseOnDelete,
-                assistantAvatar: avatarBytes,
-                searchQuery: isMatch ? searchQuery : null,
-                isSearchMatch: isFocused,
-              ));
-            }
-
-            if (!streamingDone) {
-              items.add(_buildParagraphItem(
-                role: message.role,
-                content: parts.last.trimRight(),
-                reasoningContent: null,
-                isStreaming: true,
-                animateEntrance: false,
-                createdAt: message.createdAt,
-                onDelete: null,
-                assistantAvatar: avatarBytes,
-                searchQuery: isMatch ? searchQuery : null,
-                isSearchMatch: isFocused,
-                key: const ValueKey('__streaming_target__'),
-              ));
-            }
-            continue;
-          }
-        }
-      }
-
-      items.add(
-        _RenderItem(
-          (_) => RepaintBoundary(
-            child: MessageBubble(
-              key: isStreamingTarget
-                  ? const ValueKey('__streaming_target__')
-                  : null,
-              role: message.role,
-              content: (isStreamingTarget
-                  ? chatState.streamingContent
-                  : message.content).trimRight(),
-              reasoningContent: isStreamingTarget
-                  ? (chatState.streamingReasoningContent.isNotEmpty
-                        ? chatState.streamingReasoningContent
-                        : null)
-                  : message.reasoningContent,
-              createdAt: message.createdAt,
-              animateEntrance: animateEntrance,
-              isStreaming: isStreamingTarget,
-              isCompactSummary: message.isCompactSummary,
-              isCompactBoundary: isCompactBoundary,
-              assistantAvatar: avatarBytes,
-              searchQuery: isMatch ? searchQuery : null,
-              isSearchMatch: isFocused,
-              onDelete: !message.id.startsWith('-') && !isStreamingTarget
-                  ? () => ref
-                        .read(chatNotifierProvider.notifier)
-                        .deleteMessage(message.id)
-                  : null,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return items;
-  }
-
-  /// 构建单一段落气泡，用于多段落 AI 回复拆分
-  _RenderItem _buildParagraphItem({
-    required String role,
-    required String content,
-    required String? reasoningContent,
-    required bool isStreaming,
-    required bool animateEntrance,
-    required DateTime createdAt,
-    required VoidCallback? onDelete,
-    required Uint8List? assistantAvatar,
-    required String? searchQuery,
-    required bool isSearchMatch,
-    Key? key,
-  }) {
-    return _RenderItem(
-      (_) => RepaintBoundary(
-        child: MessageBubble(
-          key: key,
-          role: role,
-          content: content,
-          reasoningContent: reasoningContent,
-          isStreaming: isStreaming,
-          animateEntrance: animateEntrance,
-          createdAt: createdAt,
-          onDelete: onDelete,
-          isCompactSummary: false,
-          isCompactBoundary: false,
-          assistantAvatar: assistantAvatar,
-          searchQuery: searchQuery,
-          isSearchMatch: isSearchMatch,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChatColumn(
-    ChatState chatState,
-    AsyncValue<List<ChatMessage>>? messagesAsync,
-    String? activeConversationId,
-    bool isMainAgent,
-  ) {
-    return Column(
-      children: [
-        if (chatState.error != null)
-          Container(
-            width: double.infinity,
-            color: AppColors.errorBg,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.error_outline,
-                  color: AppColors.error,
-                  size: 18,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    chatState.error!,
-                    style: const TextStyle(
-                      color: AppColors.error,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(
-                    Icons.close,
-                    color: AppColors.error,
-                    size: 18,
-                  ),
-                  onPressed: () =>
-                      ref.read(chatNotifierProvider.notifier).clearError(),
-                ),
-              ],
-            ),
-          ),
-        if (_isSearchVisible)
-          ChatSearchBar(
-            onClose: () => setState(() => _isSearchVisible = false),
-            onSearchChanged: (q) {
-              final messages = messagesAsync?.valueOrNull ?? [];
-              final contents = messages.map((m) => m.content).toList();
-              ref.read(chatSearchProvider.notifier).setQuery(q, contents);
-            },
-          ),
-        Expanded(
-          child: activeConversationId == null
-              ? const SizedBox.shrink()
-              : _buildMessageList(messagesAsync, chatState),
-        ),
-        if (isMainAgent)
-          ModernInputBar(
-            controller: _messageController,
-            isLoading: chatState.isLoading,
-            onSend: _sendMessage,
-            temperature: _temperature,
-            maxTokens: _maxTokens,
-            onTemperatureChanged: (v) => setState(() => _temperature = v),
-            onMaxTokensChanged: (v) => setState(() => _maxTokens = v),
-          )
-        else
-          SafeArea(
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                color: AppColors.bgSecondary,
-                border: Border(top: BorderSide(color: AppColors.border)),
-              ),
-              child: const Text(
-                '仅显示输出内容',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.textTertiary, fontSize: 13),
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-  }
-
-/// 渲染项 — 消息列表中的单条内容（消息气泡或时间分隔符），按需构建
-class _RenderItem {
-  final Widget Function(BuildContext) build;
-  _RenderItem(this.build);
 }

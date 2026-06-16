@@ -1,3 +1,9 @@
+/// 应用启动页 — 品牌动画与初始化
+///
+/// 显示 Logo 缩放淡入 + 标语上滑动画，同时并行执行后端健康检查和设置缓存初始化。
+/// 初始化完成后整体淡出并自动跳转到主页面。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,6 +11,9 @@ import 'package:go_router/go_router.dart';
 import '../core/di/providers.dart';
 import '../core/di/settings_cache.dart';
 import '../core/theme/app_colors.dart';
+import '../core/theme/app_spacing.dart';
+import '../core/theme/app_typography.dart';
+import '../core/theme/app_animations.dart';
 
 /// 应用启动页 — 显示品牌动画（Logo 缩放淡入 + 标语上滑）、加载状态，初始化完成后自动跳转主页面
 class SplashScreen extends ConsumerStatefulWidget {
@@ -36,55 +45,60 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     _startInitialization();
   }
 
+  /// 初始化三组动画控制器：Logo 缩放淡入、标语上滑淡入、整体淡出
   void _initAnimations() {
     _logoController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: AppAnimations.slow,
     );
 
     _textController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
+      duration: AppAnimations.page,
     );
 
     _fadeOutController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: AppAnimations.page,
     );
 
-    _logoScale = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _logoController, curve: Curves.easeOutExpo),
+    _logoScale = Tween<double>(begin: 0.75, end: 1.0).animate(
+      CurvedAnimation(parent: _logoController, curve: AppAnimations.spring),
     );
 
     _logoOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _logoController,
-        curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
+        curve: const Interval(0.0, 0.5, curve: AppAnimations.easeOutExpo),
       ),
     );
 
-    _textSlide = Tween<double>(begin: 20.0, end: 0.0).animate(
-      CurvedAnimation(parent: _textController, curve: Curves.easeOutCubic),
+    _textSlide = Tween<double>(begin: 16.0, end: 0.0).animate(
+      CurvedAnimation(parent: _textController, curve: AppAnimations.springIOS),
     );
 
     _textOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _textController,
-        curve: const Interval(0.0, 0.7, curve: Curves.easeOut),
+        curve: const Interval(0.0, 0.7, curve: AppAnimations.easeOut),
       ),
     );
 
     _fadeOut = Tween<double>(begin: 1.0, end: 0.0).animate(
-      CurvedAnimation(parent: _fadeOutController, curve: Curves.easeInOut),
+      CurvedAnimation(parent: _fadeOutController, curve: Curves.easeInCubic),
     );
 
     _logoController.forward();
 
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (mounted) _textController.forward();
+    // Logo 动画进行到 40% 时文字开始入场，比固定延迟更协调
+    _logoController.addListener(() {
+      if (_logoController.value >= 0.4 && !_textController.isAnimating && _textController.value == 0.0) {
+        _textController.forward();
+      }
     });
   }
 
+  /// 并行执行初始化任务（延迟、后端健康检查、设置缓存），完成后触发淡出跳转
   Future<void> _startInitialization() async {
     final results = await Future.wait([
       Future<void>.delayed(const Duration(milliseconds: 200)),
@@ -119,7 +133,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   Future<void> _initSettingsCache() async {
     try {
       await ref.read(settingsCacheInitProvider.future);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[SplashScreen] settings cache init failed: $e');
+    }
   }
 
   @override
@@ -162,7 +178,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                         );
                       },
                     ),
-                    const SizedBox(height: 32),
+                    AppSpacing.vXL,
                     AnimatedBuilder(
                       animation: _textController,
                       builder: (context, child) {
@@ -170,23 +186,23 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                           offset: Offset(0, _textSlide.value),
                           child: Opacity(
                             opacity: _textOpacity.value,
-                            child: const Column(
+                            child: Column(
                               children: [
                                 Text(
-                                  'AI 聊天',
+                                  'RIKO',
                                   style: TextStyle(
                                     color: AppColors.textPrimary,
-                                    fontSize: 28,
+                                    fontSize: AppTypography.display,
                                     fontWeight: FontWeight.w600,
                                     letterSpacing: 3,
                                   ),
                                 ),
-                                SizedBox(height: 8),
+                                AppSpacing.vSM,
                                 Text(
-                                  '智能对话，即刻开始',
+                                  '智能对话伙伴',
                                   style: TextStyle(
                                     color: AppColors.textTertiary,
-                                    fontSize: 14,
+                                    fontSize: AppTypography.body,
                                     letterSpacing: 1,
                                   ),
                                 ),
@@ -196,7 +212,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                         );
                       },
                     ),
-                    const SizedBox(height: 48),
+                    AppSpacing.vXXL,
                     if (!_isReady) ...[
                       const SizedBox(
                         width: 24,
@@ -208,9 +224,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                           ),
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      AppSpacing.vMD,
                       AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
+                        duration: AppAnimations.normal,
                         child: Text(
                           _statusText,
                           key: ValueKey<String>(_statusText),
@@ -233,6 +249,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   }
 }
 
+/// Logo 绘制组件 — 圆形边框内绘制聊天气泡图标（CustomPaint）
 class _LogoWidget extends StatelessWidget {
   const _LogoWidget();
 
@@ -252,6 +269,7 @@ class _LogoWidget extends StatelessWidget {
   }
 }
 
+/// Logo 画笔 — 绘制发光底圆 + 圆角聊天气泡轮廓 + 内部两条横线
 class _LogoPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {

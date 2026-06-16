@@ -1,6 +1,16 @@
+/// 设置页文本输入框 — 带图标、标签和密码可见性切换
+///
+/// 支持普通文本和密码模式，密码模式下右侧显示眼睛图标切换可见性。
+/// 外部 value 变更时自动同步到内部 TextEditingController。
+library;
+
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_animations.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_radius.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_typography.dart';
 
 /// 设置页文本输入框 — 带图标和标签，支持密码可见性切换（眼睛按钮）
 class SettingsTextField extends StatefulWidget {
@@ -60,10 +70,10 @@ class _SettingsTextFieldState extends State<SettingsTextField> {
             children: [
               Icon(
                 widget.icon,
-                color: const Color(0xFFd5d5d5).withValues(alpha: 0.6),
+                color: AppColors.textPrimary.withValues(alpha: 0.6),
                 size: 18,
               ),
-              const SizedBox(width: 8),
+              AppSpacing.hSM,
               Text(
                 widget.label,
                 style: const TextStyle(
@@ -73,11 +83,11 @@ class _SettingsTextFieldState extends State<SettingsTextField> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          AppSpacing.vSM,
           TextField(
             controller: _controller,
             obscureText: widget.obscureText && _isObscured,
-            style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: AppTypography.body),
             onChanged: widget.onChanged,
             decoration: InputDecoration(
               hintText: widget.hint,
@@ -85,29 +95,34 @@ class _SettingsTextFieldState extends State<SettingsTextField> {
               filled: true,
               fillColor: AppColors.bgElevated,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: AppRadius.mdAll,
                 borderSide: const BorderSide(color: AppColors.border),
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: AppRadius.mdAll,
                 borderSide: const BorderSide(color: AppColors.border),
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: AppRadius.mdAll,
                 borderSide: BorderSide(
-                  color: const Color(0xFFd5d5d5).withValues(alpha: 0.5),
+                  color: AppColors.textPrimary.withValues(alpha: 0.5),
                   width: 1.5,
                 ),
               ),
               suffixIcon: widget.obscureText
-                  ? IconButton(
-                      icon: Icon(
-                        _isObscured ? Icons.visibility_off : Icons.visibility,
-                        color: AppColors.textTertiary,
-                        size: 20,
+                  ? AnimatedSwitcher(
+                      duration: AppAnimations.quick,
+                      switchInCurve: Curves.easeOutCubic,
+                      child: IconButton(
+                        key: ValueKey(_isObscured),
+                        icon: Icon(
+                          _isObscured ? Icons.visibility_off : Icons.visibility,
+                          color: AppColors.textTertiary,
+                          size: 20,
+                        ),
+                        onPressed: () =>
+                            setState(() => _isObscured = !_isObscured),
                       ),
-                      onPressed: () =>
-                          setState(() => _isObscured = !_isObscured),
                     )
                   : null,
               contentPadding: const EdgeInsets.symmetric(

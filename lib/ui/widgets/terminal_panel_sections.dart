@@ -1,4 +1,21 @@
+/// 终端面板区段组件 — JSON 高亮、请求/响应/错误/工具调用/压缩/会话笔记/Token用量/子代理活动
+///
+/// JsonHighlighter：带缓存的 JSON 语法高亮工具，区分键/字符串/数字/布尔值颜色。
+/// RequestSectionWidget：展示 API 请求 JSON。
+/// ResponseSectionWidget：展示 AI 响应文本，支持思维链分段显示。
+/// ErrorSectionWidget：展示错误分类、代码、消息和建议。
+/// ToolCallSectionWidget：展示 AI 调用的工具列表（树形结构）。
+/// CompactSectionWidget：展示上下文压缩信息（策略、Token 变化、消息数变化）。
+/// SessionNotesSectionWidget：展示会话记忆初始化信息。
+/// UsageSectionWidget：展示 prompt/completion/total token 统计。
+/// SubAgentActivitiesWidget：展示子代理活动记录列表。
+library;
+
 import 'package:flutter/material.dart';
+import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_radius.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_typography.dart';
 import '../../infrastructure/ai_adapter/models/token_usage.dart';
 import 'terminal_panel_colors.dart';
 
@@ -169,8 +186,8 @@ class RequestSectionWidget extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(4),
+        color: AppColors.bgSecondary,
+        borderRadius: AppRadius.xsAll,
         border: Border.all(
           color: TerminalPanelColors.requestYellow.withValues(alpha: 0.3),
         ),
@@ -188,7 +205,7 @@ class RequestSectionWidget extends StatelessWidget {
               fontFamilyFallback: ['Cascadia Code', 'monospace'],
             ),
           ),
-          const SizedBox(height: 4),
+          AppSpacing.vXS,
           Text.rich(
             TextSpan(
               children: highlighter.highlight(requestJson),
@@ -218,8 +235,8 @@ class ResponseSectionWidget extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(4),
+        color: AppColors.bgSecondary,
+        borderRadius: AppRadius.xsAll,
         border: Border.all(
           color: TerminalPanelColors.responseCyan.withValues(alpha: 0.3),
         ),
@@ -237,7 +254,7 @@ class ResponseSectionWidget extends StatelessWidget {
               fontFamilyFallback: ['Cascadia Code', 'monospace'],
             ),
           ),
-          const SizedBox(height: 4),
+          AppSpacing.vXS,
           if (responseRawText.isEmpty)
             const Text(
               '(waiting for response...)',
@@ -271,8 +288,8 @@ class ResponseSectionWidget extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A1A1A),
-              borderRadius: BorderRadius.circular(4),
+              color: AppColors.bgSecondary,
+              borderRadius: AppRadius.xsAll,
               border: Border.all(
                 color: TerminalPanelColors.sessionNotesBlue.withValues(
                   alpha: 0.3,
@@ -292,7 +309,7 @@ class ResponseSectionWidget extends StatelessWidget {
                     fontFamilyFallback: ['Cascadia Code', 'monospace'],
                   ),
                 ),
-                const SizedBox(height: 4),
+                AppSpacing.vXS,
                 Text(
                   reasoning,
                   style: const TextStyle(
@@ -420,7 +437,7 @@ class ErrorSectionWidget extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: TerminalPanelColors.errorBg,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: AppRadius.xsAll,
         border: Border.all(
           color: TerminalPanelColors.errorRed.withValues(alpha: 0.3),
         ),
@@ -440,7 +457,7 @@ class ErrorSectionWidget extends StatelessWidget {
                   fontFamilyFallback: ['Cascadia Code', 'monospace'],
                 ),
               ),
-              const SizedBox(width: 8),
+              AppSpacing.hSM,
               Expanded(
                 child: Container(
                   height: 1,
@@ -453,7 +470,7 @@ class ErrorSectionWidget extends StatelessWidget {
           Row(
             children: [
               Icon(icon, color: TerminalPanelColors.errorRed, size: 14),
-              const SizedBox(width: 4),
+              AppSpacing.hXS,
               Text(
                 categoryLabel,
                 style: const TextStyle(
@@ -464,7 +481,7 @@ class ErrorSectionWidget extends StatelessWidget {
                 ),
               ),
               if (errorCode != null && errorCode!.isNotEmpty) ...[
-                const SizedBox(width: 4),
+                AppSpacing.hXS,
                 Text(
                   '($errorCode)',
                   style: const TextStyle(
@@ -478,7 +495,7 @@ class ErrorSectionWidget extends StatelessWidget {
             ],
           ),
           if (errorMessage != null && errorMessage!.isNotEmpty) ...[
-            const SizedBox(height: 4),
+            AppSpacing.vXS,
             Text(
               errorMessage!,
               style: const TextStyle(
@@ -490,7 +507,7 @@ class ErrorSectionWidget extends StatelessWidget {
             ),
           ],
           if (errorSuggestion != null && errorSuggestion!.isNotEmpty) ...[
-            const SizedBox(height: 4),
+            AppSpacing.vXS,
             Text(
               '建议：$errorSuggestion',
               style: const TextStyle(
@@ -520,8 +537,8 @@ class ToolCallSectionWidget extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(4),
+        color: AppColors.bgSecondary,
+        borderRadius: AppRadius.xsAll,
         border: Border(
           left: const BorderSide(color: TerminalPanelColors.toolCallPurple, width: 3),
           top: BorderSide(
@@ -548,7 +565,7 @@ class ToolCallSectionWidget extends StatelessWidget {
               fontFamilyFallback: ['Cascadia Code', 'monospace'],
             ),
           ),
-          const SizedBox(height: 4),
+          AppSpacing.vXS,
           ...tools.asMap().entries.map((entry) {
             final index = entry.key;
             final tool = entry.value as Map<String, dynamic>;
@@ -574,7 +591,7 @@ class ToolCallSectionWidget extends StatelessWidget {
                           fontFamilyFallback: ['Cascadia Code', 'monospace'],
                         ),
                       ),
-                      const SizedBox(width: 4),
+                      AppSpacing.hXS,
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -599,7 +616,7 @@ class ToolCallSectionWidget extends StatelessWidget {
                                   'args: $args',
                                   style: const TextStyle(
                                     color: TerminalPanelColors.textWhite,
-                                    fontSize: 10,
+                                    fontSize: AppTypography.micro,
                                     fontFamily: 'Consolas',
                                     fontFamilyFallback: [
                                       'Cascadia Code',
@@ -615,7 +632,7 @@ class ToolCallSectionWidget extends StatelessWidget {
                                   'result: $result',
                                   style: const TextStyle(
                                     color: TerminalPanelColors.promptGreen,
-                                    fontSize: 10,
+                                    fontSize: AppTypography.micro,
                                     fontFamily: 'Consolas',
                                     fontFamilyFallback: [
                                       'Cascadia Code',
@@ -661,8 +678,8 @@ class CompactSectionWidget extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(4),
+        color: AppColors.bgSecondary,
+        borderRadius: AppRadius.xsAll,
         border: Border(
           left: const BorderSide(color: TerminalPanelColors.compactOrange, width: 3),
           top: BorderSide(
@@ -689,7 +706,7 @@ class CompactSectionWidget extends StatelessWidget {
               fontFamilyFallback: ['Cascadia Code', 'monospace'],
             ),
           ),
-          const SizedBox(height: 4),
+          AppSpacing.vXS,
           Padding(
             padding: const EdgeInsets.only(left: 8),
             child: Column(
@@ -812,8 +829,8 @@ class SessionNotesSectionWidget extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(4),
+        color: AppColors.bgSecondary,
+        borderRadius: AppRadius.xsAll,
         border: Border(
           left: const BorderSide(color: TerminalPanelColors.sessionNotesBlue, width: 3),
           top: BorderSide(
@@ -840,7 +857,7 @@ class SessionNotesSectionWidget extends StatelessWidget {
               fontFamilyFallback: ['Cascadia Code', 'monospace'],
             ),
           ),
-          const SizedBox(height: 4),
+          AppSpacing.vXS,
           Padding(
             padding: const EdgeInsets.only(left: 8),
             child: Column(
@@ -926,8 +943,8 @@ class UsageSectionWidget extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(4),
+        color: AppColors.bgSecondary,
+        borderRadius: AppRadius.xsAll,
         border: Border.all(
           color: TerminalPanelColors.usageGreen.withValues(alpha: 0.3),
         ),
@@ -945,7 +962,7 @@ class UsageSectionWidget extends StatelessWidget {
               fontFamilyFallback: ['Cascadia Code', 'monospace'],
             ),
           ),
-          const SizedBox(height: 4),
+          AppSpacing.vXS,
           if (usage == null)
             const Text(
               '(waiting for usage...)',
@@ -1013,8 +1030,8 @@ class SubAgentActivitiesWidget extends StatelessWidget {
       constraints: const BoxConstraints(maxHeight: 150),
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(6),
+        color: AppColors.bgSecondary,
+        borderRadius: AppRadius.xsAll,
         border: Border.all(color: TerminalPanelColors.border),
       ),
       child: ListView.builder(
@@ -1054,16 +1071,16 @@ class SubAgentActivitiesWidget extends StatelessWidget {
                     shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(width: 8),
+                AppSpacing.hSM,
                 Text(
                   label,
                   style: TextStyle(
                     color: color,
-                    fontSize: 12,
+                    fontSize: AppTypography.caption,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(width: 8),
+                AppSpacing.hSM,
                 Text(
                   '[$triggerType]',
                   style: const TextStyle(
@@ -1072,7 +1089,7 @@ class SubAgentActivitiesWidget extends StatelessWidget {
                   ),
                 ),
                 if (tokensBefore != null && tokensAfter != null) ...[
-                  const SizedBox(width: 8),
+                  AppSpacing.hSM,
                   Text(
                     '$tokensBefore→$tokensAfter tokens',
                     style: const TextStyle(

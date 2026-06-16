@@ -1,6 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// 聊天搜索状态
+///
+/// [query] 当前搜索关键词
+/// [matchIndices] 匹配到的消息在列表中的索引
+/// [currentMatchIndex] 当前高亮的匹配项在 [matchIndices] 中的位置
 class ChatSearchState {
   final String query;
   final List<int> matchIndices;
@@ -12,7 +16,10 @@ class ChatSearchState {
     this.currentMatchIndex = 0,
   });
 
+  /// 是否存在匹配结果
   bool get hasMatches => matchIndices.isNotEmpty;
+
+  /// 搜索是否处于激活状态（关键词非空）
   bool get isActive => query.isNotEmpty;
 
   ChatSearchState copyWith({
@@ -34,6 +41,7 @@ class ChatSearchState {
 class ChatSearchNotifier extends StateNotifier<ChatSearchState> {
   ChatSearchNotifier() : super(const ChatSearchState());
 
+  /// 设置搜索关键词，对 [messageContents] 做大小写不敏感的本地过滤
   void setQuery(String q, List<String> messageContents) {
     if (q.isEmpty) {
       state = const ChatSearchState();
@@ -49,29 +57,34 @@ class ChatSearchNotifier extends StateNotifier<ChatSearchState> {
     state = ChatSearchState(
       query: q,
       matchIndices: indices,
-      currentMatchIndex: indices.isNotEmpty ? 0 : 0,
+      currentMatchIndex: indices.isNotEmpty ? 0 : -1,
     );
   }
 
+  /// 跳转到下一个匹配项（循环）
   void nextMatch() {
     if (!state.hasMatches) return;
     final next = (state.currentMatchIndex + 1) % state.matchIndices.length;
     state = state.copyWith(currentMatchIndex: next);
   }
 
+  /// 跳转到上一个匹配项（循环）
   void previousMatch() {
     if (!state.hasMatches) return;
-    final prev = (state.currentMatchIndex - 1 + state.matchIndices.length) %
+    final prev =
+        (state.currentMatchIndex - 1 + state.matchIndices.length) %
         state.matchIndices.length;
     state = state.copyWith(currentMatchIndex: prev);
   }
 
+  /// 清空搜索状态
   void clearSearch() {
     state = const ChatSearchState();
   }
 }
 
+/// 聊天搜索 Notifier Provider
 final chatSearchProvider =
     StateNotifierProvider<ChatSearchNotifier, ChatSearchState>((ref) {
-  return ChatSearchNotifier();
-});
+      return ChatSearchNotifier();
+    });

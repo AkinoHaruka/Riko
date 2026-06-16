@@ -1,3 +1,10 @@
+/// 记忆文件浏览器 — 后端记忆文件目录的浏览与预览
+///
+/// 通过后端 API 浏览记忆文件目录结构，支持目录导航（面包屑）和文件预览。
+/// Markdown 文件使用 flutter_markdown 渲染，其他文件以纯文本显示。
+/// 作为代理列表页面"文件"标签的内容。
+library;
+
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -6,7 +13,11 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/di/providers.dart';
+import '../../core/theme/app_animations.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_radius.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_typography.dart';
 
 /// 记忆文件浏览器 — 浏览后端记忆文件目录，支持目录导航与 Markdown/纯文本预览
 class MemoryFileBrowser extends ConsumerStatefulWidget {
@@ -40,6 +51,7 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
     _fetchDir('');
   }
 
+  /// 从后端获取指定目录的文件列表
   Future<void> _fetchDir(String dir) async {
     setState(() {
       _loading = true;
@@ -49,9 +61,10 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
 
     try {
       final api = ref.read(apiClientProvider);
-      final resp = await api.get('/memory-files', queryParameters: {
-        if (dir.isNotEmpty) 'dir': dir,
-      });
+      final resp = await api.get(
+        '/memory-files',
+        queryParameters: {if (dir.isNotEmpty) 'dir': dir},
+      );
       final data = resp is Map ? resp : jsonDecode(jsonEncode(resp)) as Map;
       setState(() {
         _currentDir = (data['dir'] as String?) ?? '';
@@ -68,14 +81,16 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
     }
   }
 
+  /// 读取文件内容用于预览
   Future<void> _readFile(String filePath) async {
     setState(() => _loading = true);
 
     try {
       final api = ref.read(apiClientProvider);
-      final resp = await api.get('/memory-files/read', queryParameters: {
-        'file': filePath,
-      });
+      final resp = await api.get(
+        '/memory-files/read',
+        queryParameters: {'file': filePath},
+      );
       final data = resp is Map ? resp : jsonDecode(jsonEncode(resp)) as Map;
       setState(() {
         _previewFile = _FileContent.fromJson(data as Map<String, dynamic>);
@@ -97,14 +112,19 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    if (_previewFile != null) {
-      return _buildPreview();
-    }
-
     return Column(
       children: [
-        _buildBreadcrumb(),
-        Expanded(child: _buildFileList()),
+        if (_previewFile == null) _buildBreadcrumb(),
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: AppAnimations.page,
+            switchInCurve: AppAnimations.spring,
+            switchOutCurve: AppAnimations.easeInOut,
+            child: _previewFile != null
+                ? KeyedSubtree(key: const ValueKey('preview'), child: _buildPreview())
+                : KeyedSubtree(key: const ValueKey('fileList'), child: _buildFileList()),
+          ),
+        ),
       ],
     );
   }
@@ -129,7 +149,7 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
                   : AppColors.textPrimary,
             ),
           ),
-          const SizedBox(width: 8),
+          AppSpacing.hSM,
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -143,40 +163,35 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
                         color: _currentDir.isEmpty
                             ? AppColors.textPrimary
                             : AppColors.success,
-                        fontSize: 14,
+                        fontSize: AppTypography.body,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
                   for (var i = 0; i < parts.length; i++)
                     GestureDetector(
-                      onTap:
-                          i == parts.length - 1
-                              ? null
-                              : () => _fetchDir(
-                                parts.sublist(0, i + 1).join('/'),
-                              ),
+                      onTap: i == parts.length - 1
+                          ? null
+                          : () => _fetchDir(parts.sublist(0, i + 1).join('/')),
                       child: Row(
                         children: [
                           const Text(
                             ' / ',
                             style: TextStyle(
                               color: AppColors.textTertiary,
-                              fontSize: 14,
+                              fontSize: AppTypography.body,
                             ),
                           ),
                           Text(
                             parts[i],
                             style: TextStyle(
-                              color:
-                                  i == parts.length - 1
-                                      ? AppColors.textPrimary
-                                      : AppColors.success,
-                              fontSize: 14,
-                              fontWeight:
-                                  i == parts.length - 1
-                                      ? FontWeight.w600
-                                      : FontWeight.w500,
+                              color: i == parts.length - 1
+                                  ? AppColors.textPrimary
+                                  : AppColors.success,
+                              fontSize: AppTypography.body,
+                              fontWeight: i == parts.length - 1
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
                             ),
                           ),
                         ],
@@ -192,53 +207,57 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
   }
 
   Widget _buildFileList() {
-    if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFF3EB573)),
-      );
-    }
-
     if (_error != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Text(
             _error!,
-            style: const TextStyle(color: AppColors.error, fontSize: 14),
+            style: const TextStyle(color: AppColors.error, fontSize: AppTypography.body),
           ),
         ),
       );
     }
 
-    if (_files.isEmpty) {
-      return const Center(
-        child: Text(
-          '空目录',
-          style: TextStyle(color: AppColors.textTertiary, fontSize: 14),
-        ),
-      );
-    }
-
-    return ListView.separated(
-      padding: EdgeInsets.zero,
-      itemCount: _files.length,
-      separatorBuilder: (_, _) => const Padding(
-        padding: EdgeInsets.only(left: 68),
-        child: Divider(height: 1, color: AppColors.divider),
-      ),
-      itemBuilder: (context, index) {
-        final file = _files[index];
-        return _FileItem(
-          entry: file,
-          onTap: () {
-            if (file.type == 'directory') {
-              _fetchDir(file.path);
-            } else {
-              _readFile(file.path);
-            }
-          },
-        );
-      },
+    return AnimatedSwitcher(
+      duration: AppAnimations.quick,
+      child: _loading
+          ? const Center(key: ValueKey('loading'), child: CircularProgressIndicator(color: AppColors.green))
+          : _files.isEmpty
+              ? const Center(
+                  key: ValueKey('empty'),
+                  child: Text(
+                    '空目录',
+                    style: TextStyle(color: AppColors.textTertiary, fontSize: AppTypography.body),
+                  ),
+                )
+              : KeyedSubtree(
+                  key: const ValueKey('list'),
+                  child: ListView.separated(
+                    padding: EdgeInsets.zero,
+                    itemCount: _files.length,
+                    separatorBuilder: (_, _) => const Padding(
+                      padding: EdgeInsets.only(left: 68),
+                      child: Divider(height: 1, color: AppColors.divider),
+                    ),
+                    itemBuilder: (context, index) {
+                      final file = _files[index];
+                      return AppAnimations.staggerItem(
+                        index: index,
+                        child: _FileItem(
+                          entry: file,
+                          onTap: () {
+                            if (file.type == 'directory') {
+                              _fetchDir(file.path);
+                            } else {
+                              _readFile(file.path);
+                            }
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
     );
   }
 
@@ -255,7 +274,7 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
           ),
           child: Row(
             children: [
-              GestureDetector(
+              AppAnimations.scaleTap(
                 onTap: () => setState(() => _previewFile = null),
                 child: const Icon(
                   Icons.arrow_back_ios,
@@ -263,14 +282,14 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
                   color: AppColors.textPrimary,
                 ),
               ),
-              const SizedBox(width: 8),
+              AppSpacing.hSM,
               Expanded(
                 child: Text(
                   file.name,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
-                    fontSize: 16,
+                    fontSize: AppTypography.subtitle,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -279,7 +298,7 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
                 _formatSize(file.size),
                 style: const TextStyle(
                   color: AppColors.textTertiary,
-                  fontSize: 12,
+                  fontSize: AppTypography.caption,
                 ),
               ),
             ],
@@ -288,50 +307,50 @@ class _MemoryFileBrowserState extends ConsumerState<MemoryFileBrowser> {
         Expanded(
           child: isMarkdown && file.content.trim().isNotEmpty
               ? Markdown(
-                data: file.content,
-                styleSheet: MarkdownStyleSheet(
-                  p: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 14,
-                    height: 1.6,
+                  data: file.content,
+                  styleSheet: MarkdownStyleSheet(
+                    p: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: AppTypography.body,
+                      height: 1.6,
+                    ),
+                    h1: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    h2: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: AppTypography.title,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    h3: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    code: const TextStyle(
+                      color: AppColors.green,
+                      fontSize: 13,
+                      fontFamily: 'monospace',
+                    ),
+                    codeblockDecoration: BoxDecoration(
+                      color: AppColors.bgSecondary,
+                      borderRadius: AppRadius.smAll,
+                    ),
                   ),
-                  h1: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  h2: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  h3: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  code: const TextStyle(
-                    color: Color(0xFF3EB573),
-                    fontSize: 13,
-                    fontFamily: 'monospace',
-                  ),
-                  codeblockDecoration: BoxDecoration(
-                    color: AppColors.bgSecondary,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              )
+                )
               : SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: SelectableText(
-                  file.content,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 14,
-                    height: 1.6,
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: SelectableText(
+                    file.content,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: AppTypography.body,
+                      height: 1.6,
+                    ),
                   ),
                 ),
-              ),
         ),
       ],
     );
@@ -401,24 +420,23 @@ class _FileItem extends StatelessWidget {
     final isDir = entry.type == 'directory';
     final isMarkdown = entry.name.endsWith('.md');
 
-    return GestureDetector(
+    return AppAnimations.scaleTap(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
       child: Container(
         height: 56,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
         child: Row(
           children: [
             Icon(
               isDir ? Icons.folder : Icons.description,
               color: isDir
-                  ? const Color(0xFF3EB573)
+                  ? AppColors.green
                   : isMarkdown
-                      ? AppColors.cyan
-                      : AppColors.textSecondary,
+                  ? AppColors.cyan
+                  : AppColors.textSecondary,
               size: 28,
             ),
-            const SizedBox(width: 12),
+            AppSpacing.hMDSm,
             Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -438,14 +456,18 @@ class _FileItem extends StatelessWidget {
                       _formatSize(entry.size!),
                       style: const TextStyle(
                         color: AppColors.textTertiary,
-                        fontSize: 12,
+                        fontSize: AppTypography.caption,
                       ),
                     ),
                 ],
               ),
             ),
             if (isDir)
-              const Icon(Icons.chevron_right, color: AppColors.textTertiary, size: 20),
+              const Icon(
+                Icons.chevron_right,
+                color: AppColors.textTertiary,
+                size: 20,
+              ),
           ],
         ),
       ),

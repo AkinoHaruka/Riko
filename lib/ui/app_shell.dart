@@ -1,7 +1,14 @@
+/// 桌面外壳 — 无边框窗口的根容器
+///
+/// 在桌面平台（Windows/macOS/Linux）为应用添加圆角裁剪、自定义标题栏和可拖拽缩放边框；
+/// 移动平台直接透传子组件，不做额外包装。
+library;
+
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../core/theme/app_radius.dart';
 import 'widgets/desktop_title_bar.dart';
 
 /// 桌面外壳 — 无边框窗口的根容器，添加圆角裁剪和可拖拽缩放边框
@@ -22,7 +29,7 @@ class AppShell extends StatelessWidget {
     if (!_isDesktopPlatform) return child;
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: AppRadius.mdAll,
       child: _ResizableBorder(
         child: Container(
           color: const Color(0xFF111111),

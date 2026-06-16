@@ -1,6 +1,15 @@
+/// 聊天背景选择器 — 纯色和渐变预设网格
+///
+/// 以 AlertDialog 形式展示预设的纯色和渐变背景选项，
+/// 用户选择后返回背景标识字符串（如 "solid:#1a1a2e" 或 "gradient:#0f0c29|#302b63|#24243e"）。
+library;
+
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_radius.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_typography.dart';
 
 /// 背景预设定义
 class _BgPreset {
@@ -55,8 +64,8 @@ class BackgroundPicker extends StatelessWidget {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: AppColors.bgElevated,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text('聊天背景', style: TextStyle(color: AppColors.textPrimary, fontSize: 18)),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.lgAll),
+      title: const Text('聊天背景', style: TextStyle(color: AppColors.textPrimary, fontSize: AppTypography.title)),
       content: SizedBox(
         width: 320,
         child: Wrap(
@@ -72,7 +81,7 @@ class BackgroundPicker extends StatelessWidget {
                     width: 64,
                     height: 64,
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: AppRadius.mdAll,
                       border: Border.all(color: AppColors.border),
                       gradient: p.isGradient
                           ? LinearGradient(
@@ -84,7 +93,7 @@ class BackgroundPicker extends StatelessWidget {
                       color: p.isGradient ? null : p.color,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  AppSpacing.vXS,
                   Text(
                     p.label,
                     style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
