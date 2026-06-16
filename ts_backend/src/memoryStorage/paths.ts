@@ -1,18 +1,33 @@
-﻿// 记忆存储路径管理：获取/创建记忆根目录、自动梦境目录、常驻记忆文件路径
+/**
+ * 记忆存储路径管理
+ *
+ * 集中管理记忆文件系统的所有路径，包括：
+ * - 记忆根目录和系统提示词目录（支持环境变量覆盖）
+ * - 自动梦境子目录及其索引、锁文件路径
+ * - 常驻记忆文件路径
+ * - 目录初始化（创建缺失目录和默认文件）
+ */
 import fs from 'fs';
 import path from 'path';
 import { autoDreamConfig } from '../config/index.js';
 import { logger } from '../core/logger/index.js';
 import { MEMORY_TYPES, MEMORY_TYPES_INFO } from './types.js';
 
+/** 获取记忆文件根目录，优先使用环境变量，否则使用配置中的默认值 */
 export function getMemoryRoot(): string {
   return process.env.MEMORY_ROOT_DIR || autoDreamConfig.memoryRootDir;
 }
 
+/** 获取系统提示词目录，优先使用环境变量，否则使用配置中的默认值 */
 export function getSystemPromptsDir(): string {
   return process.env.SYSTEM_PROMPTS_DIR || autoDreamConfig.systemPromptsDir;
 }
 
+/**
+ * 检查自动记忆功能是否启用。
+ * 通过 CLAUDE_CODE_DISABLE_AUTO_MEMORY 环境变量控制，
+ * 设为 1/true/yes 时禁用。
+ */
 export function isAutoMemoryEnabled(): boolean {
   const disable = (process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY || '').trim().toLowerCase();
   if (disable === '1' || disable === 'true' || disable === 'yes') {
@@ -21,18 +36,27 @@ export function isAutoMemoryEnabled(): boolean {
   return true;
 }
 
+/** 获取自动梦境根目录（记忆根目录下的 auto_dream 子目录） */
 export function getAutoDreamRoot(): string {
   return path.join(getMemoryRoot(), 'auto_dream');
 }
 
+/** 获取梦境索引文件路径 */
 export function getAutoDreamIndexPath(): string {
   return path.join(getAutoDreamRoot(), 'INDEX.md');
 }
 
+/** 获取梦境合并锁文件路径，用于防止并发合并 */
 export function getAutoDreamLockPath(): string {
   return path.join(getAutoDreamRoot(), '.consolidate-lock');
 }
 
+/**
+ * 确保自动梦境目录结构存在。
+ *
+ * 创建 auto_dream 根目录和四种分类子目录，
+ * 并在首次创建时生成 INDEX.md 索引文件模板。
+ */
 export function ensureAutoDreamDirExists(): void {
   const dreamRoot = getAutoDreamRoot();
   fs.mkdirSync(dreamRoot, { recursive: true });
@@ -75,7 +99,7 @@ ${typeDescriptions}
 ---
 name: 记忆名称
 description: 一句话简介
-type: traits_roles|interaction_rules|key_experiences|promises_goals
+type: traits_roles|interaction_rules|key_experiences|promises_goals|emotions
 ---
 \`\`\`
 
@@ -93,10 +117,17 @@ type: traits_roles|interaction_rules|key_experiences|promises_goals
   }
 }
 
+/** 获取常驻记忆文件路径（记忆根目录下的 persistent_memory.md） */
 export function getPersistentMemoryPath(): string {
   return path.join(getMemoryRoot(), 'persistent_memory.md');
 }
 
+/**
+ * 确保记忆根目录和会话记忆子目录存在。
+ *
+ * 初始化 session_memory 子目录，并在常驻记忆文件不存在时创建空文件，
+ * 确保后续读取不会因文件缺失而报错。
+ */
 export function ensureMemoryDirExists(): void {
   const memoryRoot = getMemoryRoot();
   fs.mkdirSync(memoryRoot, { recursive: true });

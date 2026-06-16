@@ -1,3 +1,9 @@
+/**
+ * Read 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 Read 工具的参数结构，
+ * 支持读取文件内容，可选指定行号偏移和读取行数。
+ */
 export function buildCatToolDefinition() {
   return {
     type: 'function' as const,

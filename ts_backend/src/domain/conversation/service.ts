@@ -1,5 +1,7 @@
 /**
- * 对话 CRUD 业务逻辑。操作成功后广播事件通知 WebSocket 客户端。
+ * 对话 CRUD 业务逻辑。
+ * 操作成功后广播事件通知 WebSocket 客户端。
+ * 包含输入验证和审计日志记录。
  */
 import { eventManager } from '../../core/events/index.js';
 import { createLogger } from '../../core/logger/index.js';
@@ -9,6 +11,13 @@ import type { Conversation, UpdateConversationRequest } from './types.js';
 
 const logger = createLogger('conversation');
 
+/**
+ * 创建新对话。
+ * @param userId - 用户 ID
+ * @param title - 对话标题
+ * @returns 创建后的对话对象
+ * @throws {HttpError} 400 标题为空
+ */
 export function createConversation(userId: string, title: string): Conversation {
   if (title == null || typeof title !== 'string') {
     throw new HttpError(400, '会话标题不能为空');
@@ -26,10 +35,23 @@ export function createConversation(userId: string, title: string): Conversation 
   return conversation;
 }
 
+/**
+ * 获取用户的所有对话列表。
+ * @param userId - 用户 ID
+ * @returns 对话列表
+ */
 export function listConversations(userId: string): Conversation[] {
   return repo.findByUserId(userId);
 }
 
+/**
+ * 更新对话的指定字段。
+ * @param id - 对话 ID
+ * @param userId - 用户 ID
+ * @param req - 更新请求
+ * @returns 更新后的对话对象
+ * @throws {HttpError} 400 无有效更新字段 / 404 对话不存在或无权访问
+ */
 export function updateConversation(
   id: string,
   userId: string,
@@ -81,6 +103,14 @@ export function updateConversation(
   return updated;
 }
 
+/**
+ * 删除对话及其所有关联数据。
+ * @security 通过 userId 确保只能删除自己的对话。
+ * @param id - 对话 ID
+ * @param userId - 用户 ID
+ * @returns 删除结果消息
+ * @throws {HttpError} 404 对话不存在或无权访问
+ */
 export function deleteConversation(id: string, userId: string): { message: string } {
   const deleted = repo.deleteWithMessages(id, userId);
   if (!deleted) {
@@ -89,7 +119,7 @@ export function deleteConversation(id: string, userId: string): { message: strin
 
   eventManager.broadcast('conversation_deleted', { id });
 
-  logger.info(`[审计] 用户ID:${userId} 执行了 删除会话 操作，会话ID: ${id}`);
+  logger.info('[审计] 用户ID:%s 执行了 删除会话 操作，会话ID: %s', userId, id);
 
   return { message: '删除成功' };
 }

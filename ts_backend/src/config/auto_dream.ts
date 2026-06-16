@@ -1,28 +1,44 @@
 /**
- * 自动梦境合并配置：后台任务定期总结会话、提取记忆并压缩上下文。
- * 可借助环境变量覆盖默认值。
+ * 自动梦境合并配置
+ *
+ * 管理后台梦境任务的参数：触发条件（最小间隔、最少会话数）、扫描频率、
+ * 持锁超时、使用的模型及温度。所有字段均可通过环境变量覆盖，
+ * 并在读取后进行边界校验，无效值回退为默认值。
+ *
+ * @module config/auto_dream
+ * @note 此模块是纯叶子节点，不依赖 core/ 或 memoryStorage/，
+ *       仅读取 process.env 和返回纯数据结构。
  */
-import { createLogger } from '../core/logger/index.js';
-import { isAutoMemoryEnabled } from '../memoryStorage/paths.js';
 
-const logger = createLogger('AutoDreamConfig');
-
+/** 自动梦境任务的完整配置结构 */
 export interface AutoDreamConfig {
+  /** 距上次合并的最小小时数，避免频繁触发 */
   minHours: number;
+  /** 触发合并所需的最少会话数 */
   minSessions: number;
+  /** 是否启用自动梦境 */
   enabled: boolean;
+  /** 后台扫描间隔（毫秒） */
   scanIntervalMs: number;
+  /** 合并锁的过期时间（毫秒），超时后允许其他实例接管 */
   holderStaleMs: number;
+  /** 梦境合并使用的 AI 模型名称 */
   model: string;
+  /** 梦境合并的采样温度，低温度保证输出稳定性 */
   temperature: number;
 }
 
+/** 梦境相关目录路径配置，可通过环境变量覆盖 */
 export const autoDreamConfig = {
+  /** 记忆文件根目录 */
   memoryRootDir: process.env.MEMORY_ROOT_DIR || './data/memories',
+  /** 系统提示词目录 */
   systemPromptsDir: process.env.SYSTEM_PROMPTS_DIR || './data/prompts',
+  /** 梦境转录日志目录，为空时不记录转录 */
   logTranscriptDir: process.env.DREAM_TRANSCRIPT_DIR || '',
 } as const;
 
+/** 返回所有字段的默认值 */
 export function getDefaultAutoDreamConfig(): AutoDreamConfig {
   return {
     minHours: 24,
@@ -53,7 +69,7 @@ export function getAutoDreamConfig(): AutoDreamConfig {
     if (Number.isFinite(parsed) && parsed > 0) {
       config.minHours = parsed;
     } else {
-      logger.warn('DREAM_MIN_HOURS 值无效: %s，使用默认值 24', minHoursStr);
+      console.warn(`[AutoDreamConfig] DREAM_MIN_HOURS 值无效: ${minHoursStr}，使用默认值 24`);
     }
   }
 
@@ -63,7 +79,7 @@ export function getAutoDreamConfig(): AutoDreamConfig {
     if (Number.isFinite(parsed) && parsed > 0) {
       config.minSessions = parsed;
     } else {
-      logger.warn('DREAM_MIN_SESSIONS 值无效: %s，使用默认值 5', minSessionsStr);
+      console.warn(`[AutoDreamConfig] DREAM_MIN_SESSIONS 值无效: ${minSessionsStr}，使用默认值 5`);
     }
   }
 
@@ -73,7 +89,7 @@ export function getAutoDreamConfig(): AutoDreamConfig {
     if (parsed !== null) {
       config.enabled = parsed;
     } else {
-      logger.warn('DREAM_ENABLED 值无效: %s，使用默认值 true', enabledStr);
+      console.warn(`[AutoDreamConfig] DREAM_ENABLED 值无效: ${enabledStr}，使用默认值 true`);
     }
   }
 
@@ -88,77 +104,73 @@ export function getAutoDreamConfig(): AutoDreamConfig {
     if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 2) {
       config.temperature = parsed;
     } else {
-      logger.warn('DREAM_TEMPERATURE 值无效: %s，使用默认值 0.3', temperatureStr);
+      console.warn(`[AutoDreamConfig] DREAM_TEMPERATURE 值无效: ${temperatureStr}，使用默认值 0.3`);
     }
   }
 
   return validateAutoDreamConfig(config);
 }
 
-/** 同时检查自动记忆和自动梦境是否启用 */
-export function isAutoDreamEnabled(): boolean {
-  return isAutoMemoryEnabled() && getAutoDreamConfig().enabled;
-}
-
-/** 校验配置对象的每项字段，无效时回退为默认值 */
+/** 校验配置对象的每项字段，无效时回退为默认值。不修改传入对象，返回新对象 */
 export function validateAutoDreamConfig(config: AutoDreamConfig): AutoDreamConfig {
+  const result = { ...config };
   const defaults = getDefaultAutoDreamConfig();
 
   if (
-    typeof config.minHours !== 'number' ||
-    !Number.isFinite(config.minHours) ||
-    config.minHours <= 0
+    typeof result.minHours !== 'number' ||
+    !Number.isFinite(result.minHours) ||
+    result.minHours <= 0
   ) {
-    logger.warn('minHours 无效: %s，回退到默认值 %d', config.minHours, defaults.minHours);
-    config.minHours = defaults.minHours;
+    console.warn(`[AutoDreamConfig] minHours 无效: ${result.minHours}，回退到默认值 ${defaults.minHours}`);
+    result.minHours = defaults.minHours;
   }
 
   if (
-    typeof config.minSessions !== 'number' ||
-    !Number.isFinite(config.minSessions) ||
-    config.minSessions <= 0
+    typeof result.minSessions !== 'number' ||
+    !Number.isFinite(result.minSessions) ||
+    result.minSessions <= 0
   ) {
-    logger.warn('minSessions 无效: %s，回退到默认值 %d', config.minSessions, defaults.minSessions);
-    config.minSessions = defaults.minSessions;
+    console.warn(`[AutoDreamConfig] minSessions 无效: ${result.minSessions}，回退到默认值 ${defaults.minSessions}`);
+    result.minSessions = defaults.minSessions;
   }
 
-  if (typeof config.enabled !== 'boolean') {
-    logger.warn('enabled 无效: %s，回退到默认值 %s', config.enabled, defaults.enabled);
-    config.enabled = defaults.enabled;
+  if (typeof result.enabled !== 'boolean') {
+    console.warn(`[AutoDreamConfig] enabled 无效: ${result.enabled}，回退到默认值 ${defaults.enabled}`);
+    result.enabled = defaults.enabled;
   }
 
   if (
-    typeof config.scanIntervalMs !== 'number' ||
-    !Number.isFinite(config.scanIntervalMs) ||
-    config.scanIntervalMs <= 0
+    typeof result.scanIntervalMs !== 'number' ||
+    !Number.isFinite(result.scanIntervalMs) ||
+    result.scanIntervalMs <= 0
   ) {
-    logger.warn('scanIntervalMs 无效: %s，回退到默认值', config.scanIntervalMs);
-    config.scanIntervalMs = defaults.scanIntervalMs;
+    console.warn(`[AutoDreamConfig] scanIntervalMs 无效: ${result.scanIntervalMs}，回退到默认值`);
+    result.scanIntervalMs = defaults.scanIntervalMs;
   }
 
   if (
-    typeof config.holderStaleMs !== 'number' ||
-    !Number.isFinite(config.holderStaleMs) ||
-    config.holderStaleMs <= 0
+    typeof result.holderStaleMs !== 'number' ||
+    !Number.isFinite(result.holderStaleMs) ||
+    result.holderStaleMs <= 0
   ) {
-    logger.warn('holderStaleMs 无效: %s，回退到默认值', config.holderStaleMs);
-    config.holderStaleMs = defaults.holderStaleMs;
+    console.warn(`[AutoDreamConfig] holderStaleMs 无效: ${result.holderStaleMs}，回退到默认值`);
+    result.holderStaleMs = defaults.holderStaleMs;
   }
 
-  if (typeof config.model !== 'string' || config.model.trim() === '') {
-    logger.warn('model 无效: %s，回退到默认值', config.model);
-    config.model = defaults.model;
+  if (typeof result.model !== 'string' || result.model.trim() === '') {
+    console.warn(`[AutoDreamConfig] model 无效: ${result.model}，回退到默认值`);
+    result.model = defaults.model;
   }
 
   if (
-    typeof config.temperature !== 'number' ||
-    !Number.isFinite(config.temperature) ||
-    config.temperature < 0 ||
-    config.temperature > 2
+    typeof result.temperature !== 'number' ||
+    !Number.isFinite(result.temperature) ||
+    result.temperature < 0 ||
+    result.temperature > 2
   ) {
-    logger.warn('temperature 无效: %s，回退到默认值 %d', config.temperature, defaults.temperature);
-    config.temperature = defaults.temperature;
+    console.warn(`[AutoDreamConfig] temperature 无效: ${result.temperature}，回退到默认值 ${defaults.temperature}`);
+    result.temperature = defaults.temperature;
   }
 
-  return config;
+  return result;
 }

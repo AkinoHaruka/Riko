@@ -1,8 +1,16 @@
 /**
- * 梦境工具定义生成器。为 SubAgent 提供 Edit/Write/Read/Grep/Glob 五个工具的 OpenAI 函数定义。
+ * 梦境工具定义生成器。
+ * 为 SubAgent 提供 Edit/Write/Read/Grep/Glob 五个工具的 OpenAI 函数定义，
+ * 实际执行时的权限控制由 permissionChecker.ts 中的自定义执行器负责。
  */
 import OpenAI from 'openai';
+import { firstThreatMessage as _firstThreatMessage } from '../../core/security/index.js';
 
+/**
+ * 构建梦境子代理可用的工具列表。
+ * 仅包含文件操作类工具，不包含搜索/执行等高风险工具。
+ * @returns OpenAI ChatCompletionTool 数组
+ */
 export function buildDreamTools(): OpenAI.ChatCompletionTool[] {
   return [
     {

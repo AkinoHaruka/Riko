@@ -1,3 +1,9 @@
+/**
+ * Tail 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 tail_tool 的参数结构，
+ * 用于查看文件末尾部分内容，默认显示最后 10 行。
+ */
 export function buildTailToolDefinition() {
   return {
     type: 'function' as const,

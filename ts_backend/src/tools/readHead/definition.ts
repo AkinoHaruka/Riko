@@ -1,3 +1,9 @@
+/**
+ * Head 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 head_tool 的参数结构，
+ * 用于查看文件开头部分内容，默认显示前 10 行。
+ */
 export function buildHeadToolDefinition() {
   return {
     type: 'function' as const,

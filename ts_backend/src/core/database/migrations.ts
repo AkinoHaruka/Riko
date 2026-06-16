@@ -1,16 +1,21 @@
 /**
  * 数据库迁移脚本。
- * 包括小版本模式（migrateCompactFields / migrateSessionNotesState 直接 ALTER TABLE）
+ *
+ * 包括小版本模式（migrateCompactFields / migrateSessionNotesState 直接 ALTER TABLE ADD COLUMN）
  * 和大版本模式（migrateToV1：INTEGER id → TEXT id 的完整重迁移）。
  *
  * V1 迁移策略：
  * 1. 建 _new 临时表，生成 TEXT 主键并复制数据
  * 2. 通过 _id_mapping 表将旧 INTEGER FK 更新为新 TEXT FK
  * 3. 删旧表，_new 表 RENAME 为正式表名
+ * 4. 清理 _id_mapping 临时表，更新 user_version
+ *
+ * @module core/database/migrations
  */
 import { generateId, type TableName } from '../utils/id.js';
 import type { Database as DatabaseType } from './connection.js';
 
+/** PRAGMA table_info 返回的列信息结构 */
 interface TableColumn {
   cid: number;
   name: string;
@@ -20,6 +25,10 @@ interface TableColumn {
   pk: number;
 }
 
+/**
+ * 迁移：为 messages 表添加 is_compact_summary 和 compact_metadata 列。
+ * 仅在列不存在时执行 ALTER TABLE，保证幂等性。
+ */
 export function migrateCompactFields(db: DatabaseType): void {
   const columns = db.pragma('table_info(messages)') as TableColumn[];
   const columnNames = columns.map((col) => col.name);
@@ -37,6 +46,26 @@ export function migrateCompactFields(db: DatabaseType): void {
   }
 }
 
+/**
+ * 迁移：为 memories 表添加 user_id 列。
+ * 仅在列不存在时执行 ALTER TABLE，保证幂等性。
+ */
+export function migrateMemoriesUserId(db: DatabaseType): void {
+  const columns = db.pragma('table_info(memories)') as TableColumn[];
+  const columnNames = columns.map((col) => col.name);
+
+  if (!columnNames.includes('user_id')) {
+    const txn = db.transaction(() => {
+      db.exec('ALTER TABLE memories ADD COLUMN user_id TEXT NOT NULL DEFAULT \'\'');
+    });
+    txn();
+  }
+}
+
+/**
+ * 迁移：为 conversations 表添加 background 列。
+ * 仅在列不存在时执行 ALTER TABLE，保证幂等性。
+ */
 export function migrateConversationBackground(db: DatabaseType): void {
   const columns = db.pragma('table_info(conversations)') as TableColumn[];
   const columnNames = columns.map((col) => col.name);
@@ -49,6 +78,10 @@ export function migrateConversationBackground(db: DatabaseType): void {
   }
 }
 
+/**
+ * 迁移：为 session_notes_state 表添加 tool_call_count 列。
+ * 仅在列不存在时执行 ALTER TABLE，保证幂等性。
+ */
 export function migrateSessionNotesState(db: DatabaseType): void {
   const columns = db.pragma('table_info(session_notes_state)') as TableColumn[];
   const columnNames = columns.map((col) => col.name);
@@ -61,8 +94,9 @@ export function migrateSessionNotesState(db: DatabaseType): void {
   }
 }
 
-// ---- V1 Migration: INTEGER id → TEXT id ----
+// ---- V1 迁移：INTEGER id → TEXT id ----
 
+/** 列定义结构，用于 V1 迁移时动态构建 CREATE TABLE 语句 */
 interface ColumnDef {
   name: string;
   type: string;
@@ -70,12 +104,14 @@ interface ColumnDef {
   defaultValue: string | null;
 }
 
+/** 表定义结构，包含表名、ID 前缀名和列定义列表 */
 interface TableDef {
   name: string;
   tableName: TableName;
   columns: ColumnDef[];
 }
 
+/** V1 迁移涉及的表定义列表，每张表需要从 INTEGER id 迁移为 TEXT id */
 const V1_TABLES: TableDef[] = [
   {
     name: 'users',
@@ -180,6 +216,7 @@ const V1_TABLES: TableDef[] = [
   },
 ];
 
+/** 外键引用关系列表，用于 V1 迁移时将旧 INTEGER FK 更新为新 TEXT FK */
 const FK_REFS: { childTable: string; childColumn: string; parentTable: string }[] = [
   { childTable: 'conversations', childColumn: 'user_id', parentTable: 'users' },
   { childTable: 'messages', childColumn: 'conversation_id', parentTable: 'conversations' },
@@ -198,88 +235,104 @@ const FK_REFS: { childTable: string; childColumn: string; parentTable: string }[
   },
 ];
 
+/**
+ * V1 大版本迁移：将所有表的 INTEGER id 转换为 TEXT id。
+ *
+ * 执行流程：
+ * 1. 清理上次失败残留的临时表，创建 _id_mapping 映射表
+ * 2. 为每张表创建 _new 临时表，逐行复制数据并生成新的 TEXT 主键
+ * 3. 通过 _id_mapping 将子表的外键从旧 INTEGER 更新为新 TEXT
+ * 4. 删除旧表，将 _new 表重命名为正式表名
+ * 5. 清理临时表，更新 user_version = 1
+ *
+ * 整个迁移在事务中执行，失败时自动回滚。
+ */
 export function migrateToV1(db: DatabaseType): void {
   console.log('[Migration] v0 → v1 (INTEGER id → TEXT id)...');
 
-  // 确保迁移可重入：清理上次失败残留的临时表
-  for (const table of V1_TABLES) {
-    db.exec(`DROP TABLE IF EXISTS ${table.name}_new`);
-  }
-  db.exec('DROP TABLE IF EXISTS _id_mapping');
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS _id_mapping (
-      table_name TEXT NOT NULL,
-      old_id INTEGER NOT NULL,
-      new_id TEXT NOT NULL,
-      PRIMARY KEY (table_name, old_id)
-    )
-  `);
-
-  const insertMapping = db.prepare(
-    'INSERT OR IGNORE INTO _id_mapping (table_name, old_id, new_id) VALUES (?, ?, ?)',
-  );
-
-  // Phase 1: Create _new tables with TEXT id, copy data with generated IDs
-  for (const table of V1_TABLES) {
-    const oldRows = db.prepare(`SELECT id FROM ${table.name}`).all() as { id: number }[];
-    console.log(`[Migration] Migrating ${oldRows.length} rows in ${table.name}...`);
-
-    const colDefs = [
-      'id TEXT PRIMARY KEY',
-      ...table.columns.map((c) => {
-        let def = `${c.name} ${c.type}`;
-        if (!c.nullable) def += ' NOT NULL';
-        if (c.defaultValue !== null) def += ` DEFAULT ${c.defaultValue}`;
-        return def;
-      }),
-    ];
-
-    db.exec(`DROP TABLE IF EXISTS ${table.name}_new`);
-    db.exec(`CREATE TABLE ${table.name}_new (${colDefs.join(', ')})`);
-
-    const cols = table.columns.map((c) => c.name);
-    const placeholders = ['?', ...cols.map(() => '?')].join(', ');
-
-    for (const row of oldRows) {
-      const newId = generateId(table.tableName);
-      const oldRow = db
-        .prepare(`SELECT ${cols.join(', ')} FROM ${table.name} WHERE id = ?`)
-        .get(row.id) as Record<string, unknown> | undefined;
-
-      if (!oldRow) continue;
-
-      db.prepare(
-        `INSERT INTO ${table.name}_new (id, ${cols.join(', ')}) VALUES (${placeholders})`,
-      ).run(newId, ...cols.map((c) => oldRow[c]));
-
-      insertMapping.run(table.name, row.id, newId);
+  const runMigration = db.transaction(() => {
+    // 确保迁移可重入：清理上次失败残留的临时表
+    for (const table of V1_TABLES) {
+      db.exec(`DROP TABLE IF EXISTS ${table.name}_new`);
     }
-  }
+    db.exec('DROP TABLE IF EXISTS _id_mapping');
 
-  // Phase 2: Update FK references in _new tables
-  console.log('[Migration] Updating FK references...');
-  for (const ref of FK_REFS) {
-    const child = `${ref.childTable}_new`;
-    db.prepare(
-      `UPDATE ${child} SET ${ref.childColumn} = (
-        SELECT m.new_id FROM _id_mapping m
-        WHERE m.table_name = '${ref.parentTable}'
-        AND m.old_id = CAST(${child}.${ref.childColumn} AS INTEGER)
-      )`,
-    ).run();
-    console.log(`[Migration]   ${child}.${ref.childColumn} → ${ref.parentTable}`);
-  }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS _id_mapping (
+        table_name TEXT NOT NULL,
+        old_id INTEGER NOT NULL,
+        new_id TEXT NOT NULL,
+        PRIMARY KEY (table_name, old_id)
+      )
+    `);
 
-  // Phase 3: Swap tables
-  console.log('[Migration] Swapping tables...');
-  for (const table of [...V1_TABLES].reverse()) {
-    db.exec(`DROP TABLE ${table.name}`);
-    db.exec(`ALTER TABLE ${table.name}_new RENAME TO ${table.name}`);
-  }
+    const insertMapping = db.prepare(
+      'INSERT OR IGNORE INTO _id_mapping (table_name, old_id, new_id) VALUES (?, ?, ?)',
+    );
 
-  // Phase 4: Cleanup and rebuild
-  db.exec('DROP TABLE IF EXISTS _id_mapping');
-  db.pragma('user_version', 1);
-  console.log('[Migration] v0 → v1 complete');
+    // Phase 1: 创建 _new 临时表，生成 TEXT 主键并复制数据
+    for (const table of V1_TABLES) {
+      const oldRows = db.prepare(`SELECT id FROM ${table.name}`).all() as { id: number }[];
+      console.log(`[Migration] Migrating ${oldRows.length} rows in ${table.name}...`);
+
+      const colDefs = [
+        'id TEXT PRIMARY KEY',
+        ...table.columns.map((c) => {
+          let def = `${c.name} ${c.type}`;
+          if (!c.nullable) def += ' NOT NULL';
+          if (c.defaultValue !== null) def += ` DEFAULT ${c.defaultValue}`;
+          return def;
+        }),
+      ];
+
+      db.exec(`DROP TABLE IF EXISTS ${table.name}_new`);
+      db.exec(`CREATE TABLE ${table.name}_new (${colDefs.join(', ')})`);
+
+      const cols = table.columns.map((c) => c.name);
+      const placeholders = ['?', ...cols.map(() => '?')].join(', ');
+
+      for (const row of oldRows) {
+        const newId = generateId(table.tableName);
+        const oldRow = db
+          .prepare(`SELECT ${cols.join(', ')} FROM ${table.name} WHERE id = ?`)
+          .get(row.id) as Record<string, unknown> | undefined;
+
+        if (!oldRow) continue;
+
+        db.prepare(
+          `INSERT INTO ${table.name}_new (id, ${cols.join(', ')}) VALUES (${placeholders})`,
+        ).run(newId, ...cols.map((c) => oldRow[c]));
+
+        insertMapping.run(table.name, row.id, newId);
+      }
+    }
+
+    // Phase 2: 通过 _id_mapping 更新子表外键引用
+    console.log('[Migration] Updating FK references...');
+    for (const ref of FK_REFS) {
+      const child = `${ref.childTable}_new`;
+      db.prepare(
+        `UPDATE ${child} SET ${ref.childColumn} = (
+          SELECT m.new_id FROM _id_mapping m
+          WHERE m.table_name = '${ref.parentTable}'
+          AND m.old_id = CAST(${child}.${ref.childColumn} AS INTEGER)
+        )`,
+      ).run();
+      console.log(`[Migration]   ${child}.${ref.childColumn} → ${ref.parentTable}`);
+    }
+
+    // Phase 3: 交换表名（逆序删除以避免外键约束冲突）
+    console.log('[Migration] Swapping tables...');
+    for (const table of [...V1_TABLES].reverse()) {
+      db.exec(`DROP TABLE ${table.name}`);
+      db.exec(`ALTER TABLE ${table.name}_new RENAME TO ${table.name}`);
+    }
+
+    // Phase 4: 清理临时表，标记迁移完成
+    db.exec('DROP TABLE IF EXISTS _id_mapping');
+    db.pragma('user_version = 1');
+    console.log('[Migration] v0 → v1 complete');
+  });
+
+  runMigration();
 }

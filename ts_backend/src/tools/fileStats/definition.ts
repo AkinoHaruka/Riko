@@ -1,4 +1,10 @@
-﻿export function buildStatToolDefinition() {
+﻿/**
+ * Stat 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 stat_tool 的参数结构，
+ * 用于查询文件或目录的元数据信息。
+ */
+export function buildStatToolDefinition() {
   return {
     type: 'function' as const,
     function: {

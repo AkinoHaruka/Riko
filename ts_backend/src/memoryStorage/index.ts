@@ -1,4 +1,12 @@
-// 记忆存储模块入口：统一导出路径/类型定义/扫描/迁移工具
+/**
+ * 记忆存储模块入口
+ *
+ * 统一导出记忆存储子模块的公共 API，包括：
+ * - paths：目录和文件路径管理
+ * - types：类型定义和常量
+ * - scanner：记忆文件扫描
+ * - migrator：数据迁移工具
+ */
 export {
   getMemoryRoot,
   getSystemPromptsDir,

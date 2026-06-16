@@ -1,3 +1,9 @@
+/**
+ * Glob (listFiles) 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 Glob 工具的参数结构，
+ * 支持按 glob 模式匹配文件名，结果按修改时间排序。
+ */
 export function buildLsToolDefinition() {
   return {
     type: 'function' as const,

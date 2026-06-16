@@ -1,3 +1,9 @@
+/**
+ * Grep 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 Grep 工具的参数结构，
+ * 支持正则表达式搜索、glob 过滤、多种输出模式和上下文行显示。
+ */
 export function buildGrepToolDefinition() {
   return {
     type: 'function' as const,

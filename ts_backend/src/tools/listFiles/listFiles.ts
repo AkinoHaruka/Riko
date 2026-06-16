@@ -1,8 +1,16 @@
-﻿// 记忆文件列表工具：扫描记忆目录中的 .md 文件，解析 frontmatter，按修改时间排序
+﻿/**
+ * 记忆文件列表工具核心实现
+ *
+ * 扫描记忆目录中的 .md 文件，解析 frontmatter 提取描述和类型信息，
+ * 按修改时间降序排列，并生成人类可读的文件清单文本。
+ * 结果数量限制为 MAX_MEMORY_FILES，避免返回过多数据。
+ */
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 import { validateCommonPath, resolveVirtualPath } from '../../core/validation/path.js';
-import { parseFrontmatter, parseMemoryType } from '../../core/validation/frontmatter.js';
+import { parseFrontmatter } from '../../core/validation/frontmatter.js';
+import { parseMemoryType } from '../../memoryStorage/types.js';
 import {
   MAX_MEMORY_FILES,
   FRONTMATTER_READ_LINES,
@@ -12,6 +20,10 @@ import {
 } from '../types.js';
 import type { MemoryHeader, LsRequest, LsResult, LsError, LsResponse } from '../types.js';
 
+/**
+ * 将 frontmatter 值安全地转换为字符串或 null。
+ * 数组和纯对象类型返回 null，因为它们不适合作为描述或类型字段。
+ */
 export function coerceToStringOrNull(value: unknown): string | null {
   if (value == null) {
     return null;
@@ -26,11 +38,23 @@ export function coerceToStringOrNull(value: unknown): string | null {
   return text || null;
 }
 
-export function scanMemoryFiles(
+/**
+ * 扫描记忆目录中的 .md 文件并提取头部摘要信息。
+ *
+ * 使用 readline 只读取每个文件的前 FRONTMATTER_READ_LINES 行来解析 frontmatter，
+ * 避免读取大文件的完整内容。结果按修改时间降序排列，
+ * 最多返回 maxFiles 个文件。
+ *
+ * @param memoryRoot - 记忆根目录的绝对路径
+ * @param subPath    - 子目录相对路径，空或 '.' 表示根目录
+ * @param maxFiles   - 最大返回文件数
+ * @returns 文件头部摘要列表
+ */
+export async function scanMemoryFiles(
   memoryRoot: string,
   subPath: string = '',
   maxFiles: number = MAX_MEMORY_FILES,
-): MemoryHeader[] {
+): Promise<MemoryHeader[]> {
   const rootResolved = path.resolve(memoryRoot);
 
   let scanRoot: string;
@@ -50,6 +74,7 @@ export function scanMemoryFiles(
 
   const entries: Array<{ filepath: string; mtimeMs: number }> = [];
 
+  /** 递归遍历目录，收集 .md 文件路径和修改时间 */
   function walkDir(dir: string): void {
     let dirents: fs.Dirent[];
     try {
@@ -75,16 +100,27 @@ export function scanMemoryFiles(
 
   walkDir(scanRoot);
 
+  // 按修改时间降序排列，取前 maxFiles 个
   entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
   const topEntries = entries.slice(0, maxFiles);
 
   const headers: MemoryHeader[] = [];
   for (const entry of topEntries) {
     try {
-      const fileContent = fs.readFileSync(entry.filepath, 'utf-8');
-      const fileLines = fileContent.split('\n');
-      const headLines = fileLines.slice(0, FRONTMATTER_READ_LINES);
-      const headContent = headLines.join('\n');
+      // 使用 readline 只读前 FRONTMATTER_READ_LINES 行，避免读取整个大文件
+      const lines: string[] = [];
+      const rl = readline.createInterface({
+        input: fs.createReadStream(entry.filepath, { encoding: 'utf-8' }),
+        crlfDelay: Infinity,
+      });
+      for await (const line of rl) {
+        lines.push(line);
+        if (lines.length >= FRONTMATTER_READ_LINES) {
+          rl.close();
+          break;
+        }
+      }
+      const headContent = lines.join('\n');
 
       const parsed = parseFrontmatter(headContent, entry.filepath);
       const fm = parsed.frontmatter;
@@ -109,6 +145,14 @@ export function scanMemoryFiles(
   return headers;
 }
 
+/**
+ * 将文件头部摘要列表格式化为人类可读的清单文本。
+ *
+ * 格式：- [type] filename (ISO时间): description
+ *
+ * @param headers - 文件头部摘要列表
+ * @returns 格式化的清单文本
+ */
 export function formatMemoryManifest(headers: MemoryHeader[]): string {
   const lines: string[] = [];
 
@@ -125,7 +169,13 @@ export function formatMemoryManifest(headers: MemoryHeader[]): string {
   return lines.join('\n');
 }
 
-export function executeLs(request: LsRequest): LsResponse {
+/**
+ * 执行记忆文件列表查询。
+ *
+ * @param request - 包含可选路径参数的请求
+ * @returns 文件列表和格式化清单，或错误信息
+ */
+export async function executeLs(request: LsRequest): Promise<LsResponse> {
   const reqPath = request.path ?? '';
 
   const virtual = resolveVirtualPath(reqPath);
@@ -150,7 +200,7 @@ export function executeLs(request: LsRequest): LsResponse {
     }
   }
 
-  const headers = scanMemoryFiles(memoryRoot, relativePath);
+  const headers = await scanMemoryFiles(memoryRoot, relativePath);
   const manifest = formatMemoryManifest(headers);
 
   return {
@@ -161,6 +211,7 @@ export function executeLs(request: LsRequest): LsResponse {
   } as LsResult;
 }
 
+/** 根据错误代码生成人类可读的错误消息 */
 function errorMessage(errorCode: string, filePath: string): string {
   const messages: Record<string, string> = {
     [PATH_UNSAFE]: `路径不安全: ${filePath}`,

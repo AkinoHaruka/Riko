@@ -1,6 +1,13 @@
-﻿/**
+/**
  * 会话笔记服务：管理每个对话的笔记文件（session_memory/*.md）。
  * 通过 SubAgent 驱动 AI 自动提取对话要点，维护笔记文件的新鲜度。
+ *
+ * 核心流程（extractNotes）：
+ * 1. 查询会话消息历史（倒序取 500 条再翻转）
+ * 2. 构建子代理提示词（含压缩上下文、原始对话、当前笔记）
+ * 3. 执行 SubAgent 多轮对话，AI 使用文件工具更新笔记
+ * 4. 验证笔记文件是否实际变化，更新数据库状态
+ * 5. 广播事件和记录活动日志
  */
 import path from 'path';
 import fs from 'fs';
@@ -12,21 +19,25 @@ import {
 } from './promptBuilder.js';
 import { buildAllToolDefinitions } from './toolDefinitions.js';
 import { getDb } from '../../core/database/index.js';
+import { HttpError } from '../../core/utils/index.js';
 import { autoDreamConfig } from '../../config/index.js';
 import { createLogger } from '../../core/logger/index.js';
 import { SubAgentExecutor } from '../subAgent/executor.js';
 import { buildSubAgentPromptParts } from '../subAgent/promptBuilder.js';
 import type { SubAgentConfig, SubAgentPromptParts } from '../subAgent/types.js';
-import type { ToolContext } from '../../tools/types.js';
+import type { ToolContext } from '../../core/types/tools.js';
 import { eventManager } from '../../core/events/manager.js';
 import { recordActivity } from '../../domain/monitor/service.js';
 import { loadMainPrompt, loadToolRules, loadPersistentMemory } from '../../prompts/loader.js';
 import { getParamValue } from '../../domain/setting/index.js';
 import * as messageRepo from '../../domain/message/repository.js';
+import { findById as findConversationById } from '../../domain/conversation/repository.js';
 
 const logger = createLogger('SessionMemoryService');
-const DEFAULT_MODEL = 'deepseek-v4-pro';
+/** 默认模型标识，getParamValue 未找到用户设置时使用 */
+const FALLBACK_MODEL = 'deepseek-v4-pro';
 
+/** 笔记查询响应 */
 export interface SessionNotesResponse {
   conversation_id: string;
   content: string;
@@ -34,12 +45,14 @@ export interface SessionNotesResponse {
   file_path: string;
 }
 
+/** 笔记提取响应 */
 export interface ExtractResponse {
   success: boolean;
   message: string;
   content: string;
 }
 
+/** 笔记删除响应 */
 export interface DeleteResponse {
   success: boolean;
   message: string;
@@ -52,7 +65,8 @@ export class SessionMemoryService {
     this.manager = new SessionMemoryManager();
   }
 
-  getNotes(conversationId: string): SessionNotesResponse {
+  /** 获取指定会话的笔记内容和文件路径 */
+  getNotes(conversationId: string, _userId?: string): SessionNotesResponse {
     const filePath = this.manager.getSessionMemoryPath(conversationId);
 
     if (!fs.existsSync(filePath)) {
@@ -77,6 +91,11 @@ export class SessionMemoryService {
     };
   }
 
+  /**
+   * 提取会话笔记。通过 SubAgent 驱动 AI 分析对话历史并更新笔记文件。
+   * 执行完成后：更新数据库状态、注入 system 消息到对话、广播事件、记录活动日志。
+   * @security 插入 system 消息前验证会话所有权，防止越权写入。
+   */
   async extractNotes(conversationId: string, userId: string): Promise<ExtractResponse> {
     logger.info(
       '[extractNotes] 开始提取会话记忆, conversationId=%s, userId=%s',
@@ -90,14 +109,21 @@ export class SessionMemoryService {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       logger.error('[extractNotes] 数据库未初始化: %s', msg);
-      throw new Error(`数据库未初始化: ${msg}`);
+      throw new HttpError(500, `数据库未初始化: ${msg}`);
+    }
+
+    // @security 验证会话所有权，防止越权提取笔记
+    const conversation = findConversationById(conversationId, userId);
+    if (!conversation) {
+      throw new HttpError(404, '会话不存在或无权访问');
     }
 
     let rows: Array<{ role: string; content: string; is_compact_summary: number }>;
     try {
       rows = db
         .prepare(
-          'SELECT role, content, is_compact_summary FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 200',
+          // 限制 500 条以覆盖更多早期上下文，同时避免单次查询返回过多数据
+          'SELECT role, content, is_compact_summary FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 500',
         )
         .all(conversationId) as Array<{
         role: string;
@@ -107,11 +133,11 @@ export class SessionMemoryService {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       logger.error('[extractNotes] 查询消息失败: %s', msg);
-      throw new Error(`查询消息失败: ${msg}`);
+      throw new HttpError(500, `查询消息失败: ${msg}`);
     }
 
     if (!rows || rows.length === 0) {
-      throw new Error('该会话没有消息记录');
+      throw new HttpError(404, '该会话没有消息记录');
     }
 
     logger.info('[extractNotes] 查询到 %d 条消息', rows.length);
@@ -167,7 +193,7 @@ export class SessionMemoryService {
     const toolDefinitions = buildAllToolDefinitions();
     logger.info('[extractNotes] 工具定义数量: %d', toolDefinitions.length);
 
-    const selectedModel = getParamValue(userId, 'selected_model', DEFAULT_MODEL);
+    const selectedModel = getParamValue(userId, 'selected_model', FALLBACK_MODEL);
     logger.info('[extractNotes] 使用模型: %s (用户选择: %s)', selectedModel, selectedModel);
 
     const config: SubAgentConfig = {
@@ -205,6 +231,7 @@ export class SessionMemoryService {
       logger.warn('[extractNotes] SubAgent返回成功但笔记文件未变化，标记为失败');
     }
 
+    // SubAgent 返回成功但笔记文件未变化时，标记为失败（AI 可能仅输出文字而未调用文件工具）
     const effectiveSuccess = result.success && notesActuallyChanged;
 
     let tokensAfter = tokensBefore;
@@ -219,23 +246,29 @@ export class SessionMemoryService {
     const fullPrompt = `[System]\n${promptParts.mainPrompt}\n\n${promptParts.toolRules}${promptParts.persistentMemory ? '\n\n' + promptParts.persistentMemory : ''}\n\n[User]\n${promptParts.compactContext ? promptParts.compactContext + '\n\n' : ''}${promptParts.rawConversation}\n\n${promptParts.subAgentPrompt}`;
 
     if (effectiveSuccess) {
-      try {
-        const outputContent = result.output.trim() || '会话记忆已更新';
-        const wrappedContent = `<session-memory-update>\n${outputContent}\n</session-memory-update>`;
-        messageRepo.create({
-          conversation_id: conversationId,
-          role: 'system',
-          content: wrappedContent,
-          is_compact_summary: false,
-          compact_metadata: JSON.stringify({
-            source: 'session_memory',
-            trigger_type: isInit ? 'init' : 'update',
-          }),
-        });
-        messageRepo.updateConversationTimestamp(conversationId);
-        logger.info('[extractNotes] session memory输出已注入到对话消息中');
-      } catch (e) {
-        logger.warn('[extractNotes] 注入session memory输出到对话失败: %s', e);
+      // 插入 system 消息前验证会话所有权，防止越权写入
+      const conversation = findConversationById(conversationId, userId);
+      if (conversation) {
+        try {
+          const outputContent = result.output.trim() || '会话记忆已更新';
+          const wrappedContent = `<session-memory-update>\n${outputContent}\n</session-memory-update>`;
+          messageRepo.create({
+            conversation_id: conversationId,
+            role: 'system',
+            content: wrappedContent,
+            is_compact_summary: false,
+            compact_metadata: JSON.stringify({
+              source: 'session_memory',
+              trigger_type: isInit ? 'init' : 'update',
+            }),
+          });
+          messageRepo.updateConversationTimestamp(conversationId);
+          logger.info('[extractNotes] session memory输出已注入到对话消息中');
+        } catch (e) {
+          logger.warn('[extractNotes] 注入session memory输出到对话失败: %s', e);
+        }
+      } else {
+        logger.warn('[extractNotes] 会话所有权验证失败，跳过注入: conversationId=%s, userId=%s', conversationId, userId);
       }
     }
 
@@ -328,7 +361,8 @@ export class SessionMemoryService {
     };
   }
 
-  deleteNotes(conversationId: string): DeleteResponse {
+  /** 删除指定会话的笔记文件，并将数据库状态重置为未初始化 */
+  deleteNotes(conversationId: string, _userId?: string): DeleteResponse {
     const filePath = this.manager.findExistingFile(conversationId);
 
     if (filePath && fs.existsSync(filePath)) {

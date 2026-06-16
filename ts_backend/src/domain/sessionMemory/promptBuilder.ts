@@ -1,42 +1,40 @@
 /**
  * 会话记忆提示构建器。提供 Token 估算、章节大小分析、超限提醒生成以及系统提示扩展功能。
+ *
+ * 核心流程：
+ * 1. analyzeSectionSizes — 解析笔记文件的 Markdown 章节，估算各章节 Token 数
+ * 2. generateSectionReminders — 对超限章节生成精简提醒
+ * 3. buildSystemPromptExtension — 组装完整的系统提示扩展（注入到主对话的 system prompt 中）
+ * 4. buildSessionMemorySubAgentPrompt — 组装子代理专用提示（独立的多轮对话）
  */
 import { getSessionMemoryPrompt } from '../../prompts/sessionMemoryPrompt.js';
 import { SESSION_MEMORY_TEMPLATE } from './manager.js';
 import { MAX_SECTION_LENGTH, MAX_TOTAL_SESSION_MEMORY_TOKENS } from './types.js';
 import type { SectionSizes } from './types.js';
+import { estimateTextTokens } from '../compact/tokenEstimator.js';
+import { sanitizeUntrustedContent } from '../chat/types.js';
 
+/** 将模板中的 {{变量名}} 替换为实际值，未匹配的变量保持原样 */
 export function substituteVariables(template: string, variables: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
     Object.prototype.hasOwnProperty.call(variables, key) ? variables[key]! : match,
   );
 }
 
-const CJK_RANGES: [number, number][] = [
-  [0x4e00, 0x9fff],
-  [0x3000, 0x303f],
-  [0xff00, 0xffef],
-];
-
+// 统一使用 compact/tokenEstimator 中的估算函数，保持全项目一致性
 export function estimateTokenCount(text: string): number {
-  let cjkCount = 0;
-  let otherCount = 0;
-
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    const isCjk = CJK_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi);
-    if (isCjk) {
-      cjkCount++;
-    } else {
-      otherCount++;
-    }
-  }
-
-  return Math.floor(cjkCount / 1.5 + otherCount / 4);
+  return estimateTextTokens(text);
 }
 
+/** Markdown 章节标题正则，匹配 # 开头的标题行 */
 const SECTION_HEADER_PATTERN = /^#{1,6}\s+.+$/;
 
+/**
+ * 分析笔记文件中各章节的 Token 大小。
+ * 按 Markdown 标题切分章节，估算每节的 Token 数。
+ * @param content 笔记文件内容
+ * @returns 章节标题 → Token 数的映射
+ */
 export function analyzeSectionSizes(content: string): SectionSizes {
   const sections: SectionSizes = {};
   const lines = content.split('\n');
@@ -64,6 +62,12 @@ export function analyzeSectionSizes(content: string): SectionSizes {
   return sections;
 }
 
+/**
+ * 生成章节超限提醒文本。当总 Token 超预算或单章节超限时，生成对应的警告信息。
+ * @param sectionSizes 各章节的 Token 大小
+ * @param totalTokens 笔记总 Token 数
+ * @returns 提醒文本，无超限时返回空字符串
+ */
 export function generateSectionReminders(sectionSizes: SectionSizes, totalTokens: number): string {
   const overBudget = totalTokens > MAX_TOTAL_SESSION_MEMORY_TOKENS;
   const oversizedSections = Object.entries(sectionSizes)
@@ -96,6 +100,13 @@ export function generateSectionReminders(sectionSizes: SectionSizes, totalTokens
   return parts.join('');
 }
 
+/**
+ * 构建注入到主对话 system prompt 的会话记忆扩展。
+ * 包含笔记系统说明、当前笔记内容、章节超限提醒。
+ * 笔记内容由 AI 自动写入，属于不可信数据，需净化后用边界标签包裹。
+ * @param notesContent 当前笔记内容
+ * @param conversationId 会话 ID，用于生成笔记文件路径
+ */
 export function buildSystemPromptExtension(
   notesContent: string,
   conversationId: number | undefined,
@@ -106,9 +117,12 @@ export function buildSystemPromptExtension(
 
   const notesPath = conversationId != null ? `session_memory/${conversationId}_*.md` : '';
 
+  // 净化笔记内容，移除可能干扰上下文边界标记的 XML 标签
+  const sanitizedNotes = sanitizeUntrustedContent(effectiveNotes);
+
   const variables: Record<string, string> = {
     notesPath,
-    currentNotes: effectiveNotes,
+    currentNotes: sanitizedNotes,
   };
 
   const basePrompt = substituteVariables(promptTemplate, variables);
@@ -123,6 +137,13 @@ export function buildSystemPromptExtension(
   return header + basePrompt + sectionReminders;
 }
 
+/**
+ * 构建子代理专用的会话记忆提示。与 buildSystemPromptExtension 不同，
+ * 此函数不包含系统说明头部，仅包含提示词模板和章节提醒。
+ * @param notesPath 笔记文件相对路径
+ * @param currentNotes 当前笔记内容
+ * @param memoryRoot 记忆根目录路径
+ */
 export function buildSessionMemorySubAgentPrompt(
   notesPath: string,
   currentNotes: string,
@@ -143,6 +164,13 @@ export function buildSessionMemorySubAgentPrompt(
   return basePrompt + sectionReminders;
 }
 
+/**
+ * 将会话记忆更新内容注入到消息列表中。在指定位置后插入一条 system 消息，
+ * 用 <session-memory-update> 标签包裹，便于前端识别和渲染。
+ * @param messages 原始消息列表
+ * @param updateContent 更新内容
+ * @param insertAfterIndex 插入位置（在该索引之后插入）
+ */
 export function injectSessionMemoryUpdate(
   messages: Array<{ role: string; content: string }>,
   updateContent: string,

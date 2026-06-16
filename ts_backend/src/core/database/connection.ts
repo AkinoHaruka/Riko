@@ -4,6 +4,10 @@
  * 启动策略（优先 better-sqlite3，兜底 sql.js WASM）：
  * better-sqlite3 是原生 C++ 扩展，性能更好；
  * sql.js 是 WASM 版本，兼容性更好（适用于 Web/部分移动端场景）。
+ *
+ * 初始化流程：建表 → 增量迁移 → 索引创建 → 默认用户（由 auth 中间件按需创建）。
+ *
+ * @module core/database/connection
  */
 import path from 'path';
 import fs from 'fs';
@@ -23,9 +27,11 @@ import {
   migrateCompactFields,
   migrateConversationBackground,
   migrateSessionNotesState,
+  migrateMemoriesUserId,
   migrateToV1,
 } from './migrations.js';
 
+/** 数据库统一接口，抽象 better-sqlite3 与 sql.js 的差异 */
 interface DatabaseLike {
   prepare(sql: string): {
     run(...params: unknown[]): { changes: number; lastInsertRowid: number };
@@ -33,12 +39,13 @@ interface DatabaseLike {
     all(...params: unknown[]): Record<string, unknown>[];
   };
   exec(sql: string): void;
-  pragma(input: string, value?: unknown): unknown;
+  pragma(input: string, options?: { simple?: boolean }): unknown;
   transaction<T>(fn: () => T): () => T;
   close(): void;
 }
 
 let db: DatabaseLike | null = null;
+/** 初始化 Promise，防止并发调用 initDb() 时重复初始化 */
 let dbInitPromise: Promise<void> | null = null;
 
 /**
@@ -75,7 +82,8 @@ export async function initDb(): Promise<void> {
       /* ignore */
     }
 
-    let nativeDb: DatabaseLike;
+    let nativeDb: DatabaseLike | undefined;
+    /** 通过环境变量 DB_ENGINE=wasm 强制使用 WASM 引擎 */
     const useWasm = process.env.DB_ENGINE === 'wasm';
 
     if (!useWasm) {
@@ -85,11 +93,11 @@ export async function initDb(): Promise<void> {
         nativeDb = new Database(dbPath) as unknown as DatabaseLike;
         nativeDb.pragma('journal_mode = WAL');
       } catch {
-        // Fall through to WASM
+        // better-sqlite3 加载失败（如无原生编译产物），回退到 WASM 引擎
       }
     }
 
-    if (useWasm || !nativeDb!) {
+    if (useWasm || nativeDb === undefined) {
       const { DatabaseWrapper, getSqlJs } = await import('./adapter.js');
       const SQL = await getSqlJs();
       const sqlJsDb = existed ? new SQL.Database(fs.readFileSync(dbPath)) : new SQL.Database();
@@ -112,13 +120,17 @@ export async function initDb(): Promise<void> {
       migrateCompactFields(nativeDb);
       migrateSessionNotesState(nativeDb);
       migrateConversationBackground(nativeDb);
+      migrateMemoriesUserId(nativeDb);
 
-      const currentVersion = nativeDb.pragma('user_version') as number;
+      const versionResult = nativeDb.pragma('user_version') as { user_version: number }[];
+      const currentVersion = versionResult[0]?.user_version ?? 0;
+      // 已有数据库且版本为 0：需要执行 V1 迁移（INTEGER id → TEXT id）
       if (currentVersion === 0 && existed) {
         migrateToV1(nativeDb);
       }
+      // 新数据库直接设为 V1，无需迁移
       if (currentVersion === 0 && !existed) {
-        nativeDb.pragma('user_version', 1);
+        nativeDb.pragma('user_version = 1');
       }
 
       for (const idx of CREATE_INDEXES) {
@@ -138,15 +150,27 @@ export async function initDb(): Promise<void> {
   return dbInitPromise;
 }
 
-/** 关闭数据库连接并重置状态 */
-export function closeDb(): void {
+/** 关闭数据库连接并重置状态（WASM 引擎下需 await 确保数据刷盘） */
+export async function closeDb(): Promise<void> {
   if (db !== null) {
-    db.close();
+    const dbToClose = db;
     db = null;
     dbInitPromise = null;
+    try {
+      await (dbToClose as unknown as { close: () => Promise<void> | void }).close();
+    } catch {
+      // close() 可能同步返回，忽略类型差异
+    }
   }
 }
 
+/**
+ * 获取数据库实例。
+ * 必须在 initDb() 完成后调用，否则抛出错误。
+ *
+ * @returns 数据库实例
+ * @throws 数据库未初始化时抛出错误
+ */
 export function getDb(): DatabaseLike {
   if (db === null) {
     throw new Error('数据库未初始化，请先调用 initDb()');

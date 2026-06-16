@@ -1,4 +1,13 @@
-// 文件查找工具：按 glob 模式匹配文件名，支持 ** 递归通配，结果按修改时间排序
+/**
+ * 文件查找工具核心实现
+ *
+ * 按 glob 模式匹配文件名，支持 ** 递归通配符，结果按修改时间降序排序。
+ * 自动跳过版本控制目录（.git、.svn 等）以避免无意义的搜索结果。
+ *
+ * glob 匹配算法：
+ * - 不含 ** 时，使用 fnmatch 风格的单层匹配
+ * - 含 ** 时，递归拆分路径段进行多层级匹配
+ */
 import fs from 'fs';
 import path from 'path';
 import { validateCommonPath } from '../../core/validation/path.js';
@@ -13,6 +22,16 @@ import type { FindRequest, FindResult, FindError, FindResponse } from '../types.
 
 const VCS_SET: ReadonlySet<string> = new Set(VCS_DIRECTORIES);
 
+/**
+ * 验证查找路径的安全性和有效性。
+ *
+ * @security 通过 validateCommonPath 确保路径不越界，
+ *           并额外验证路径必须是已存在的目录。
+ *
+ * @param filePath   - 待验证的路径
+ * @param memoryRoot - 允许操作的根目录
+ * @returns [解析后的绝对路径, 错误代码]
+ */
 export function validateFindPath(
   filePath: string,
   memoryRoot: string,
@@ -34,6 +53,16 @@ export function validateFindPath(
   return [resolvedPath, null];
 }
 
+/**
+ * 从 glob 模式中提取基础目录和相对模式。
+ *
+ * 例如 "docs/*.md" 解析为 ["docs", "*.md"]
+ * 例如 "*.txt" 解析为 ["", "*.txt"]
+ * 支持递归通配符（双星号）模式，通配符之前的部分视为目录前缀，用于缩小搜索范围。
+ *
+ * @param pattern - glob 模式字符串
+ * @returns [基础目录, 剩余的 glob 模式]
+ */
 export function extractGlobBaseDirectory(
   pattern: string,
 ): [baseDir: string, relativePattern: string] {
@@ -52,6 +81,7 @@ export function extractGlobBaseDirectory(
     return [baseDir, relativePattern];
   }
 
+  // 无通配符时，以最后一个路径分隔符为界
   const sepPos = Math.max(pattern.lastIndexOf('/'), pattern.lastIndexOf('\\'));
   if (sepPos !== -1) {
     return [pattern.slice(0, sepPos), pattern.slice(sepPos + 1)];
@@ -59,6 +89,13 @@ export function extractGlobBaseDirectory(
   return ['', pattern];
 }
 
+/**
+ * fnmatch 风格的单层 glob 匹配。
+ *
+ * 将 glob 模式转换为正则表达式：
+ * - * 匹配除路径分隔符外的任意字符
+ * - ? 匹配除路径分隔符外的单个字符
+ */
 function fnmatchStyle(name: string, pat: string): boolean {
   const regexStr = pat
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
@@ -71,6 +108,11 @@ function fnmatchStyle(name: string, pat: string): boolean {
   }
 }
 
+/**
+ * 递归路径段匹配，支持 ** 通配符。
+ *
+ * ** 匹配零个或多个路径段，通过回溯搜索所有可能的匹配路径。
+ */
 function matchParts(
   pathParts: readonly string[],
   pi: number,
@@ -84,9 +126,11 @@ function matchParts(
     return false;
   }
   if (patternParts[gi] === '**') {
+    // ** 在模式末尾时匹配剩余所有路径段
     if (gi + 1 === patternParts.length) {
       return true;
     }
+    // 尝试跳过 0 到 N 个路径段，寻找后续模式的匹配
     for (let skip = pi; skip <= pathParts.length; skip++) {
       if (matchParts(pathParts, skip, patternParts, gi + 1)) {
         return true;
@@ -103,6 +147,12 @@ function matchParts(
   return false;
 }
 
+/**
+ * 判断相对路径是否匹配 glob 模式。
+ *
+ * @param relPath - 相对于搜索根目录的文件路径
+ * @param pattern - glob 匹配模式
+ */
 export function globMatch(relPath: string, pattern: string): boolean {
   if (!pattern.includes('**')) {
     return fnmatchStyle(relPath, pattern);
@@ -114,6 +164,7 @@ export function globMatch(relPath: string, pattern: string): boolean {
   return matchParts(pathParts, 0, patternParts, 0);
 }
 
+/** 根据错误代码生成人类可读的错误消息 */
 export function errorMessage(errorCode: string, filePath: string): string {
   const messages: Record<string, string> = {
     [PATH_UNSAFE]: `路径不安全: ${filePath}`,
@@ -124,6 +175,15 @@ export function errorMessage(errorCode: string, filePath: string): string {
   return messages[errorCode] ?? `未知错误: ${errorCode}`;
 }
 
+/**
+ * 执行文件查找操作。
+ *
+ * 流程：验证路径 → 提取 glob 基础目录 → 递归遍历文件 →
+ * glob 匹配 → 按修改时间排序 → 分页截取
+ *
+ * @param request    - 查找请求参数
+ * @param memoryRoot - 允许操作的根目录
+ */
 export function executeFind(request: FindRequest, memoryRoot: string): FindResponse {
   const [resolvedPath, pathError] = validateFindPath(request.path ?? '', memoryRoot);
   if (pathError !== null) {
@@ -136,6 +196,7 @@ export function executeFind(request: FindRequest, memoryRoot: string): FindRespo
 
   const [baseDir, relativePattern] = extractGlobBaseDirectory(request.pattern);
 
+  // 如果 glob 模式包含目录前缀，将其拼接到搜索根目录
   let searchRoot: string;
   if (baseDir) {
     searchRoot = path.join(resolvedPath!, baseDir);
@@ -149,6 +210,7 @@ export function executeFind(request: FindRequest, memoryRoot: string): FindRespo
         } satisfies FindError;
       }
     } catch {
+      // 基础目录不存在时返回空结果而非错误
       return {
         success: true,
         filenames: [],
@@ -163,6 +225,7 @@ export function executeFind(request: FindRequest, memoryRoot: string): FindRespo
   const memoryRootResolved = path.resolve(memoryRoot);
   const matches: [mtime: number, relPath: string][] = [];
 
+  /** 递归遍历目录，收集匹配的文件 */
   function walkDir(dir: string): void {
     let entries: fs.Dirent[];
     try {
@@ -172,6 +235,7 @@ export function executeFind(request: FindRequest, memoryRoot: string): FindRespo
     }
 
     for (const entry of entries) {
+      // 跳过版本控制目录
       if (VCS_SET.has(entry.name)) {
         continue;
       }
@@ -185,6 +249,7 @@ export function executeFind(request: FindRequest, memoryRoot: string): FindRespo
           const stat = fs.statSync(fullPath);
           const relToSearch = path.relative(searchRoot, fullPath);
           if (globMatch(relToSearch, relativePattern)) {
+            // 返回相对于 memoryRoot 的路径，确保调用方能定位文件
             const relToRoot = path.relative(memoryRootResolved, fullPath);
             matches.push([stat.mtimeMs, relToRoot]);
           }
@@ -197,6 +262,7 @@ export function executeFind(request: FindRequest, memoryRoot: string): FindRespo
 
   walkDir(searchRoot);
 
+  // 按修改时间降序排列，最新修改的文件排在前面
   matches.sort((a, b) => b[0] - a[0]);
   const allFilenames = matches.map((m) => m[1]);
   const total = allFilenames.length;

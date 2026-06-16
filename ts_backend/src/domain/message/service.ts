@@ -12,6 +12,10 @@ import type {
   MessageListResult,
 } from './types.js';
 
+/**
+ * 创建消息。校验会话所有权后插入消息，更新会话时间戳，并广播事件。
+ * @security 通过 verifyConversationOwnership 校验 user_id，无权限抛 404。
+ */
 export function createMessage(userId: string, req: CreateMessageRequest): Message {
   const owned = repo.verifyConversationOwnership(req.conversation_id, userId);
   if (!owned) {
@@ -30,6 +34,10 @@ export function createMessage(userId: string, req: CreateMessageRequest): Messag
   return message;
 }
 
+/**
+ * 查询会话消息列表。支持分页和全量两种模式。
+ * @security 校验会话所有权，无权限时返回空数组而非抛异常（兼容前端轮询场景）。
+ */
 export function listMessages(
   userId: string,
   conversationId: string,
@@ -61,6 +69,11 @@ export function listMessages(
   return repo.listByConversation(conversationId, userId);
 }
 
+/**
+ * 更新消息内容。仅允许更新 content 和 reasoning_content。
+ * @param skipBroadcast 为 true 时跳过事件广播，用于 SSE 流式场景避免重复推送。
+ * @security 通过 findMessageWithConversationId 校验 user_id，无权限抛 404。
+ */
 export function updateMessage(
   userId: string,
   id: string,
@@ -87,7 +100,7 @@ export function updateMessage(
     fields.reasoning_content = req.reasoning_content;
   }
 
-  repo.update(id, fields);
+  repo.update(id, fields, userId);
 
   if (!skipBroadcast) {
     eventManager.broadcast('message_updated', {
@@ -99,13 +112,17 @@ export function updateMessage(
   return { message: '更新成功' };
 }
 
+/**
+ * 删除单条消息。校验所有权后删除，并广播删除事件。
+ * @security 通过 findMessageWithConversationId 校验 user_id，无权限抛 404。
+ */
 export function deleteMessage(userId: string, id: string): { message: string } {
   const found = repo.findMessageWithConversationId(id, userId);
   if (!found) {
     throw new HttpError(404, '消息不存在或无权限');
   }
 
-  repo.deleteById(id);
+  repo.deleteById(id, userId);
 
   eventManager.broadcast('message_deleted', {
     id,
@@ -115,6 +132,10 @@ export function deleteMessage(userId: string, id: string): { message: string } {
   return { message: '删除成功' };
 }
 
+/**
+ * 批量删除指定会话下的所有消息。用于清空会话或删除会话前的级联清理。
+ * @security 校验会话所有权，无权限抛 404。
+ */
 export function batchDeleteMessages(
   userId: string,
   conversationId: string,

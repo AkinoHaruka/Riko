@@ -1,4 +1,13 @@
-// 字数统计工具：统计文件的行数/字数/字节数，支持单文件和目录批量模式
+/**
+ * 字数统计工具核心实现
+ *
+ * 统计文件的行数、字数和字节数，支持两种模式：
+ * - 单文件模式：指定 file_path 统计单个文件
+ * - 批量模式：指定 path 目录路径，递归统计目录下匹配 glob 模式的所有文件
+ *
+ * 超过 MAX_FILE_SIZE 的文件跳过内容统计（行数和字数记为 0），
+ * 仅统计字节数，避免读取大文件导致性能问题。
+ */
 import fs from 'fs';
 import path from 'path';
 import {
@@ -18,22 +27,19 @@ import {
 import { validateCommonPath } from '../../core/validation/path.js';
 import { autoDreamConfig } from '../../config/auto_dream.js';
 import { extractGlobBaseDirectory, globMatch } from '../findFiles/index.js';
+import { formatFileSize } from '../shared/formatFileSize.js';
 
 const VCS_SET: ReadonlySet<string> = new Set(VCS_DIRECTORIES);
 
-export function formatFileSize(sizeBytes: number): string {
-  if (sizeBytes < 1024) {
-    return `${sizeBytes}B`;
-  }
-  if (sizeBytes < 1024 * 1024) {
-    return `${(sizeBytes / 1024).toFixed(1)}KB`;
-  }
-  if (sizeBytes < 1024 * 1024 * 1024) {
-    return `${(sizeBytes / (1024 * 1024)).toFixed(1)}MB`;
-  }
-  return `${(sizeBytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
-}
-
+/**
+ * 统计单个文件的行数、字数和字节数。
+ *
+ * 超过大小限制的文件仅统计字节数，行数和字数记为 0，
+ * 避免读取大文件导致内存和性能问题。
+ *
+ * @param filePath - 文件的绝对路径
+ * @returns 文件统计结果
+ */
 export function countFileStats(filePath: string): {
   lines: number;
   words: number;
@@ -68,6 +74,11 @@ export function countFileStats(filePath: string): {
   };
 }
 
+/**
+ * 验证字数统计路径的安全性和存在性。
+ *
+ * @security 通过 validateCommonPath 确保路径不越界。
+ */
 function validateWcPath(
   filePath: string,
   memoryRoot: string,
@@ -84,6 +95,12 @@ function validateWcPath(
   return { resolvedPath: result.resolvedPath, error: null };
 }
 
+/**
+ * 单文件统计模式。
+ *
+ * @param request    - 统计请求
+ * @param memoryRoot - 允许操作的根目录
+ */
 function executeSingle(request: WcRequest, memoryRoot: string): WcResult | WcError {
   const { resolvedPath, error: pathError } = validateWcPath(request.file_path!, memoryRoot);
   if (pathError) {
@@ -132,6 +149,12 @@ function executeSingle(request: WcRequest, memoryRoot: string): WcResult | WcErr
   };
 }
 
+/**
+ * 目录批量统计模式。
+ *
+ * 递归遍历目录，按 glob 模式过滤文件后统计每个文件的行数/字数/字节数。
+ * 自动跳过版本控制目录和符号链接。
+ */
 function executeBatch(request: WcRequest, memoryRoot: string): WcResult | WcError {
   const { resolvedPath, error: pathError } = validateWcPath(request.path!, memoryRoot);
   if (pathError) {
@@ -154,6 +177,7 @@ function executeBatch(request: WcRequest, memoryRoot: string): WcResult | WcErro
   const globPattern = request.glob?.trim() || '*.md';
   const [baseDir, filenamePattern] = extractGlobBaseDirectory(globPattern);
 
+  // 如果 glob 模式包含目录前缀，将其拼接到搜索根目录
   let searchRoot: string;
   if (baseDir) {
     searchRoot = path.join(resolvedPath!, baseDir);
@@ -185,6 +209,7 @@ function executeBatch(request: WcRequest, memoryRoot: string): WcResult | WcErro
   let totalWords = 0;
   let totalBytes = 0;
 
+  /** 递归遍历目录，统计匹配文件的行数/字数/字节数 */
   function walkDir(dir: string): void {
     let entries: fs.Dirent[];
     try {
@@ -205,6 +230,7 @@ function executeBatch(request: WcRequest, memoryRoot: string): WcResult | WcErro
 
       if (!entry.isFile()) continue;
 
+      // 跳过符号链接，避免重复统计或循环引用
       try {
         const lstat = fs.lstatSync(fullPath);
         if (lstat.isSymbolicLink()) continue;
@@ -227,6 +253,7 @@ function executeBatch(request: WcRequest, memoryRoot: string): WcResult | WcErro
         within_size_limit: stats.within_size_limit,
       });
 
+      // 仅在文件大小合规时累加行数和字数
       if (stats.within_size_limit) {
         totalLines += stats.lines;
         totalWords += stats.words;
@@ -248,6 +275,17 @@ function executeBatch(request: WcRequest, memoryRoot: string): WcResult | WcErro
   };
 }
 
+/**
+ * 执行字数统计操作。
+ *
+ * 根据 request 中的参数自动选择单文件或批量模式：
+ * - 有 file_path 时走单文件模式
+ * - 有 path 时走批量模式
+ * - 两者都没有时返回错误
+ *
+ * @param request    - 统计请求
+ * @param memoryRoot - 允许操作的根目录，未提供时使用配置默认值
+ */
 export function executeWc(request: WcRequest, memoryRoot?: string): WcResult | WcError {
   const root = memoryRoot || autoDreamConfig.memoryRootDir;
 
@@ -266,6 +304,7 @@ export function executeWc(request: WcRequest, memoryRoot?: string): WcResult | W
   };
 }
 
+/** 根据错误代码生成人类可读的错误消息 */
 export function errorMessage(errorCode: string, filePath: string): string {
   const messages: Record<string, string> = {
     [PATH_UNSAFE]: `路径不安全: ${filePath}`,

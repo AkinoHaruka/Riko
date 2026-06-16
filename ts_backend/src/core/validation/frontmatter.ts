@@ -5,20 +5,26 @@
  * - 避免引入 js-yaml 这种大依赖，仅解析最简单 key: value 格式。
  * - 对含特殊字符（括号、冒号、星号等）的值自动包裹引号，防止解析错误。
  * - 解析失败时静默降级，不中断流程。
+ *
+ * 注意：本模块不再重导出 memoryStorage/types 的内容。
+ * 消费方如需 MEMORY_TYPES 或 parseMemoryType，请直接从 memoryStorage/types.js 导入。
+ *
+ * @module core/validation/frontmatter
  */
-import { MEMORY_TYPES, parseMemoryType } from '../../memoryStorage/types.js';
-import type { MemoryType } from '../../memoryStorage/types.js';
 
-export { MEMORY_TYPES, parseMemoryType };
-export type { MemoryType };
-
+/** 解析结果：frontmatter 键值对 + 正文内容 */
 export interface ParsedMarkdown {
   frontmatter: Record<string, unknown>;
   content: string;
 }
 
+/** YAML 特殊字符正则，匹配到这些字符的值需要用引号包裹 */
 const YAML_SPECIAL_CHARS = /[{}[\]*&#!|>%@`]|: /;
 
+/**
+ * 对 YAML 值中含特殊字符的行自动包裹双引号。
+ * 已被引号包裹的值跳过，避免重复引号。
+ */
 function quoteProblematicValues(frontmatterText: string): string {
   const result: string[] = [];
   for (const line of frontmatterText.split('\n')) {
@@ -44,6 +50,10 @@ function quoteProblematicValues(frontmatterText: string): string {
   return result.join('\n');
 }
 
+/**
+ * 简易 YAML 解析器，仅支持 key: value 格式。
+ * 自动识别 null、布尔值、整数和引号包裹的字符串。
+ */
 function parseSimpleYaml(text: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const line of text.split('\n')) {
@@ -70,17 +80,26 @@ function parseSimpleYaml(text: string): Record<string, unknown> {
       value = true;
     } else if (value.toLowerCase() === 'false') {
       value = false;
-    } else {
-      const num = Number(value);
-      if (!isNaN(num)) value = num;
+    } else if (/^\d+$/.test(value)) {
+      // 仅对明确的整数格式做数字转换，避免将版本号等（如 "3.0"）误转
+      value = Number(value);
     }
     result[key] = value;
   }
   return result;
 }
 
+/** Frontmatter 分隔符正则：匹配 --- 包裹的 YAML 头部 */
 const FRONTMATTER_PATTERN = /^---\s*\n([\s\S]*?)---\s*\n?/;
 
+/**
+ * 解析 Markdown 文本中的 Frontmatter。
+ * 先尝试直接解析，失败后对特殊字符值包裹引号再试，均失败则返回空 frontmatter。
+ *
+ * @param markdownText - 包含可选 Frontmatter 的 Markdown 文本
+ * @param _sourcePath - 来源文件路径（保留参数，暂未使用）
+ * @returns 解析结果，包含 frontmatter 键值对和正文内容
+ */
 export function parseFrontmatter(markdownText: string, _sourcePath = ''): ParsedMarkdown {
   const match = FRONTMATTER_PATTERN.exec(markdownText);
   if (!match) {

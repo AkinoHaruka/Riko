@@ -1,9 +1,11 @@
 /**
- * 自动梦境服务：后台知识整固任务。定期检查是否满足触发条件（时间间隔 + 会话数），
- * 获取分布式锁后，通过 SubAgent 驱动 AI 整理和归纳跨会话信息。
+ * 自动梦境服务：后台知识整固任务。
+ * 定期检查是否满足触发条件（时间间隔 + 会话数），获取分布式锁后，
+ * 通过 SubAgent 驱动 AI 整理和归纳跨会话信息。
+ * 整固完成后更新常驻记忆并广播事件通知前端。
  */
 import { createLogger } from '../../core/logger/index.js';
-import { isAutoDreamEnabled, getAutoDreamConfig, autoDreamConfig } from '../../config/index.js';
+import { getAutoDreamConfig, autoDreamConfig } from '../../config/index.js';
 import { isAutoMemoryEnabled, getAutoDreamRoot } from '../../memoryStorage/paths.js';
 import type { DreamContext, DreamTaskState } from './types.js';
 import { registerDreamTask, addDreamTurn, completeDreamTask, failDreamTask } from './task.js';
@@ -42,8 +44,15 @@ type DreamCompleteCallback = (task: DreamTaskState) => void;
 let runner: ((context: DreamContext, onComplete?: DreamCompleteCallback) => Promise<void>) | null =
   null;
 let currentTask: DreamTaskState | null = null;
+let isRunning = false;
+let _initialized = false;
 
-/** 从数据库中收集最近的非梦境对话消息，作为梦境整合的上下文 */
+/**
+ * 从数据库中收集最近的非梦境对话消息，作为梦境整合的上下文。
+ * 取最近 2 条活跃对话，每条对话取最近若干条消息，总计不超过 maxMessages 条。
+ * @param userId - 用户 ID
+ * @param maxMessages - 最大消息数，默认 30
+ */
 function collectRecentConversationContext(
   userId: string,
   maxMessages: number = 30,
@@ -71,11 +80,23 @@ function collectRecentConversationContext(
   }
 }
 
+/** 获取当前正在执行的梦境任务状态，无任务时返回 null */
 export function getCurrentDreamTask(): DreamTaskState | null {
   return currentTask;
 }
 
+/**
+ * 初始化自动梦境服务。注册内部运行函数，但不立即执行。
+ * 实际触发由外部定时调用 executeAutoDream 控制。
+ */
 export function initAutoDream(): void {
+  // HMR 守卫：防止模块热替换时重复初始化
+  if (_initialized) {
+    logger.debug('AutoDream 已初始化，跳过重复调用');
+    return;
+  }
+  _initialized = true;
+
   let lastSessionScanAt = 0;
 
   async function runAutoDream(
@@ -86,12 +107,18 @@ export function initAutoDream(): void {
     const userRow = getDb().prepare('SELECT id FROM users LIMIT 1').get() as
       | { id: string }
       | undefined;
-    const userId = userRow?.id ?? '1';
+    if (!userRow) {
+      logger.warn('AutoDream 跳过：无用户记录');
+      return;
+    }
+    const userId = userRow.id;
 
-    if (!context.force && !(isAutoMemoryEnabled() && isAutoDreamEnabled())) {
+    // 非强制模式下检查全局开关
+    if (!context.force && !(isAutoMemoryEnabled() && getAutoDreamConfig().enabled)) {
       return;
     }
 
+    // 非强制模式下检查用户级功能开关
     if (!context.force) {
       try {
         if (!isFeatureEnabled(userId, 'feature_auto_dream')) {
@@ -102,6 +129,7 @@ export function initAutoDream(): void {
       }
     }
 
+    // 检查时间间隔是否满足最小触发条件
     const triggerParams = getDreamTriggerParams(userId);
     const lastAt = readLastConsolidatedAt();
     const hoursSince = (Date.now() - lastAt) / 3_600_000;
@@ -109,18 +137,21 @@ export function initAutoDream(): void {
       return;
     }
 
+    // 扫描间隔限流，避免频繁查询数据库
     const sinceScanMs = Date.now() - lastSessionScanAt;
     if (!context.force && sinceScanMs < cfg.scanIntervalMs) {
       return;
     }
     lastSessionScanAt = Date.now();
 
+    // 检查新增会话数是否满足最小触发条件
     const sessionIds = listSessionsTouchedSince(lastAt);
     const filteredIds = sessionIds.filter((id) => id !== context.currentSessionId);
     if (!context.force && filteredIds.length < triggerParams.minSessions) {
       return;
     }
 
+    // 获取分布式锁（强制模式跳过锁检查）
     let priorMtime: number | null;
     if (context.force) {
       priorMtime = lastAt;
@@ -134,8 +165,8 @@ export function initAutoDream(): void {
       `Dream 触发 — 距上次 ${hoursSince.toFixed(1)}h, ${filteredIds.length} 个会话待审查`,
     );
 
-    let task = registerDreamTask(filteredIds.length, priorMtime);
-    currentTask = task;
+    const taskRef = { current: registerDreamTask(filteredIds.length, priorMtime) };
+    currentTask = taskRef.current;
     const memoryRoot = getAutoDreamRoot();
 
     eventManager.broadcast('dream_started', {
@@ -148,9 +179,10 @@ export function initAutoDream(): void {
       onComplete?.(t);
     };
 
+    /** 整固成功后的收尾工作：记录完成状态、更新常驻记忆、广播事件 */
     const finalizeSuccess = (output: string, dreamTrace?: unknown) => {
-      task = completeDreamTask(task);
-      currentTask = task;
+      taskRef.current = completeDreamTask(taskRef.current);
+      currentTask = taskRef.current;
       recordConsolidation();
       updatePersistentMemoryFromDream(memoryRoot);
       eventManager.broadcast(SSE_EVENT_DREAM_ACTIVITY, {
@@ -170,7 +202,7 @@ export function initAutoDream(): void {
         },
         summary: `Dream completed: reviewed ${filteredIds.length} sessions`,
       });
-      wrappedOnComplete(task);
+      wrappedOnComplete(taskRef.current);
     };
 
     try {
@@ -205,40 +237,55 @@ export function initAutoDream(): void {
       });
 
       if (result.success) {
-        task = addDreamTurn(task, result.output.slice(0, 500), 0, []);
+        taskRef.current = addDreamTurn(taskRef.current, result.output.slice(0, 500), 0, []);
         finalizeSuccess(result.output, result.trace);
       } else {
         logger.warn('Dream 子代理执行失败: %s', result.error);
-        task = failDreamTask(task);
-        currentTask = task;
+        taskRef.current = failDreamTask(taskRef.current);
+        currentTask = taskRef.current;
         if (!context.force) {
           rollbackConsolidationLock(priorMtime);
         }
-        wrappedOnComplete(task);
+        wrappedOnComplete(taskRef.current);
       }
     } catch (e) {
       logger.error('Dream 执行失败: %s', e instanceof Error ? e.message : String(e));
-      task = failDreamTask(task);
-      currentTask = task;
+      taskRef.current = failDreamTask(taskRef.current);
+      currentTask = taskRef.current;
       if (!context.force) {
         rollbackConsolidationLock(priorMtime);
       }
-      wrappedOnComplete(task);
+      wrappedOnComplete(taskRef.current);
     }
   }
 
   runner = runAutoDream;
 }
 
+/**
+ * 执行自动梦境。若已有任务在运行则跳过。
+ * @param context - 梦境执行上下文，默认为非强制模式
+ * @param onComplete - 任务完成后的回调
+ */
 export async function executeAutoDream(
   context?: DreamContext,
   onComplete?: DreamCompleteCallback,
 ): Promise<void> {
-  if (!runner) return;
+  if (!runner || isRunning) return;
+  // 在任何 await 之前立即设置标志，防止并发调用竞态
+  isRunning = true;
   const ctx = context || { force: false, currentSessionId: '' };
-  await runner(ctx, onComplete);
+  try {
+    await runner(ctx, onComplete);
+  } finally {
+    isRunning = false;
+  }
 }
 
+/**
+ * 手动触发梦境整固（强制模式，跳过触发条件检查和锁获取）。
+ * @param onComplete - 任务完成后的回调
+ */
 export async function manualDream(onComplete?: DreamCompleteCallback): Promise<void> {
   const context: DreamContext = { force: true, currentSessionId: '' };
   await executeAutoDream(context, onComplete);

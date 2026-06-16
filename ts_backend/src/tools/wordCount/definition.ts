@@ -1,3 +1,9 @@
+/**
+ * Wc (wordCount) 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 wc_tool 的参数结构，
+ * 支持单文件统计和目录批量统计，超过 10MB 的文件不进行统计。
+ */
 export function buildWcToolDefinition() {
   return {
     type: 'function' as const,

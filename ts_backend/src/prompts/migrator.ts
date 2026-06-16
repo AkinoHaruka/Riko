@@ -1,10 +1,17 @@
-// 提示词目录迁移工具：将旧版目录结构中的提示词文件迁移到新版路径
+/**
+ * 提示词目录迁移工具
+ *
+ * 将旧版 system_prompts 目录中的提示词文件迁移到新版 prompts 目录，
+ * 同时迁移常驻记忆文件从旧位置到 memories 目录。
+ * 迁移采用复制策略（保留旧目录），避免数据丢失。
+ */
 import fs from 'fs';
 import path from 'path';
 import { PROMPT_DIR, PROMPT_PATHS } from './paths.js';
 import { getSystemPromptsDir, getPersistentMemoryPath } from '../memoryStorage/paths.js';
 import { logger } from '../core/logger/index.js';
 
+/** 旧版路径到新版路径的映射表 */
 const OLD_TO_NEW_MAPPINGS: Array<{ oldRelPath: string; newPath: string }> = [
   { oldRelPath: 'main_chat.md', newPath: PROMPT_PATHS.mainPrompt },
   {
@@ -15,6 +22,13 @@ const OLD_TO_NEW_MAPPINGS: Array<{ oldRelPath: string; newPath: string }> = [
   { oldRelPath: path.join('dream', 'prompt.md'), newPath: PROMPT_PATHS.dreamPrompt },
 ];
 
+/**
+ * 执行提示词目录迁移。
+ *
+ * 遍历映射表，将旧目录中存在的文件复制到新路径。
+ * 目标文件已存在时跳过，避免覆盖用户修改。
+ * 迁移完成后旧目录保留，由用户手动清理。
+ */
 export function migratePromptDir(): void {
   const oldDir = getSystemPromptsDir();
 

@@ -1,4 +1,9 @@
-// 文件头部读取工具：读取文件开头指定行数，带行号格式化输出
+/**
+ * 文件头部读取工具核心实现
+ *
+ * 读取文件开头指定行数，带行号格式化输出。
+ * 默认显示前 10 行，lines=0 表示读取全部内容。
+ */
 import fs from 'fs';
 import {
   type HeadRequest,
@@ -11,23 +16,15 @@ import {
   INVALID_LINES,
 } from '../types.js';
 import { validateCommonPath, resolveVirtualPath } from '../../core/validation/path.js';
+import { formatLinesWithNumbers } from '../shared/formatLines.js';
 
-export function formatLinesWithNumbers(
-  lines: string[],
-  startLine: number,
-): [content: string, endLine: number] {
-  const endLine = startLine + lines.length - 1;
-  const width = String(endLine).length;
-
-  const formattedLines: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const lineNum = startLine + i;
-    formattedLines.push(`${String(lineNum).padStart(width)}\u2192${lines[i]}`);
-  }
-
-  return [formattedLines.join('\n'), endLine];
-}
-
+/**
+ * 读取文本的头部指定行数并格式化。
+ *
+ * @param text  - 完整文件内容
+ * @param lines - 读取行数，0 表示全部，默认 10
+ * @returns [格式化后的内容, 文件总行数, 结束行号]
+ */
 export function readFileHead(
   text: string,
   lines: number = 10,
@@ -50,6 +47,12 @@ export function readFileHead(
   return [content, totalLines, endLine];
 }
 
+/**
+ * 执行文件头部读取操作。
+ *
+ * @param request - 包含文件路径和可选行数参数的请求
+ * @returns 文件头部内容或错误信息
+ */
 export function executeHead(request: HeadRequest): HeadResult | HeadError {
   if (request.lines !== undefined && request.lines < 0) {
     return {
@@ -109,6 +112,7 @@ export function executeHead(request: HeadRequest): HeadResult | HeadError {
   };
 }
 
+/** 根据错误代码生成人类可读的错误消息 */
 export function errorMessage(errorCode: string, filePath: string): string {
   const messages: Record<string, string> = {
     [PATH_UNSAFE]: `路径不安全: ${filePath}`,

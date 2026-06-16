@@ -1,3 +1,9 @@
+/**
+ * Find 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 find_tool 的参数结构，
+ * 支持按 glob 模式查找文件，结果按修改时间排序。
+ */
 export function buildFindToolDefinition() {
   return {
     type: 'function' as const,

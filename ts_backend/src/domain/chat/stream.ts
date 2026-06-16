@@ -1,183 +1,101 @@
 /**
- * SSE 流式响应处理。负责解析 DeepSeek 流式 chunk、工具调用累积、
- * 首个响应等待超时提示，以及后采样钩子（压缩、会话笔记、梦境）的编排。
+ * SSE 流式响应编排器。
+ * 负责连接管理、等待提示、请求日志，以及后采样钩子编排。
+ * 多轮工具调用循环委托给 toolCallLoop.ts 的 streamingToolCallLoop。
+ *
+ * 多 Provider 支持：根据 model ID 自动路由到对应的 Transport，
+ * 非 OpenAI 兼容 Provider 使用 Transport 的归一化流式接口。
  */
-import type { ChatCompletionChunk } from 'openai/resources/chat/completions.js';
-import type { ChatCompletionCreateParamsStreaming } from 'openai/resources/chat/completions/completions.js';
 import { APIError, default as OpenAI } from 'openai';
-import { getOrCreateClient } from '../../core/ai/client.js';
+import type { ChatCompletionCreateParamsStreaming } from 'openai/resources/chat/completions/completions.js';
+import { getOrCreateClient, getTransportForModel, resolveProvider } from '../../core/ai/client.js';
+import type { ProviderTransport, NormalizedStreamChunk, NormalizedMessage, NormalizedTool } from '../../core/ai/providers/index.js';
+import { OpenAICompatibleTransport } from '../../core/ai/providers/index.js';
 import { mapApiError } from '../../core/ai/errors.js';
-import { env } from '../../config/index.js';
 import { createLogger } from '../../core/logger/index.js';
-import { executeToolCalls, buildToolResultMessages } from './toolHandler.js';
-import type {
-  ToolCallAccumulator,
-  UsageData,
-  FinishData,
-  DeepSeekDeltaExtension,
-  DeepSeekUsageExtension,
-} from './types.js';
 import {
   SSE_EVENT_CONNECTED,
-  SSE_EVENT_CONTENT,
-  SSE_EVENT_REASONING_CONTENT,
-  SSE_EVENT_TOOL_CALL,
-  SSE_EVENT_FINISH,
-  SSE_EVENT_USAGE,
   SSE_EVENT_ERROR,
   SSE_EVENT_FULL_REQUEST,
+  SSE_EVENT_WAITING,
 } from './types.js';
-import { accumulateToolCall } from './types.js';
+import { formatSseEvent, streamingToolCallLoop } from './toolCallLoop.js';
 import { runPostSamplingHooks } from './postSampling.js';
 
 const logger = createLogger('Stream');
 
-type DeepSeekDelta = ChatCompletionChunk.Choice.Delta & DeepSeekDeltaExtension;
-type DeepSeekUsage = NonNullable<ChatCompletionChunk['usage']> & DeepSeekUsageExtension;
-type ChatStream = AsyncIterable<ChatCompletionChunk>;
+// 重新导出 formatSseEvent 供外部使用（保持向后兼容）
+export { formatSseEvent } from './toolCallLoop.js';
 
-export function formatSseEvent(
-  eventType: string,
-  content?: string,
-  data?: Record<string, unknown>,
-): string {
-  const payload: Record<string, unknown> = { type: eventType };
-  if (content !== undefined) {
-    payload.content = content;
-  }
-  if (data !== undefined) {
-    payload.data = data;
-  }
-  return `data: ${JSON.stringify(payload)}\n\n`;
-}
-
-function extractUsageData(usage: DeepSeekUsage): UsageData {
-  const usageData: UsageData = {
-    prompt_tokens: usage.prompt_tokens,
-    completion_tokens: usage.completion_tokens,
-    total_tokens: usage.total_tokens,
-  };
-  if (usage.prompt_cache_hit_tokens !== undefined) {
-    usageData.prompt_cache_hit_tokens = usage.prompt_cache_hit_tokens;
-  }
-  if (usage.prompt_cache_miss_tokens !== undefined) {
-    usageData.prompt_cache_miss_tokens = usage.prompt_cache_miss_tokens;
-  }
-  return usageData;
-}
-
-interface ChunkProcessResult {
-  hasToolCalls: boolean;
-  reasoningContentAccumulator: string;
-  textContent: string;
-}
-
-async function* processStreamChunks(
-  stream: ChatStream,
-  toolCallsAccumulator: ToolCallAccumulator,
-  initialReasoningContent: string,
-  isContinueStream: boolean,
-  onFirstChunk?: () => void,
-): AsyncGenerator<string, ChunkProcessResult> {
-  let hasToolCalls = false;
-  let reasoningContentAccumulator = initialReasoningContent;
-  let textContentAccumulator = '';
-  let isFirstChunk = true;
-
-  for await (const chunk of stream) {
-    if (isFirstChunk) {
-      isFirstChunk = false;
-      onFirstChunk?.();
-    }
-
-    if (chunk.choices && chunk.choices.length > 0) {
-      const choice = chunk.choices[0];
-      const delta = choice.delta as DeepSeekDelta;
-
-      if (delta.content) {
-        yield formatSseEvent(SSE_EVENT_CONTENT, delta.content);
-        textContentAccumulator += delta.content;
-      }
-
-      if (delta.reasoning_content) {
-        reasoningContentAccumulator += delta.reasoning_content;
-        yield formatSseEvent(SSE_EVENT_REASONING_CONTENT, delta.reasoning_content);
-      }
-
-      if (delta.tool_calls) {
-        hasToolCalls = true;
-        for (const tc of delta.tool_calls) {
-          accumulateToolCall(toolCallsAccumulator, tc);
-        }
-      }
-
-      if (choice.finish_reason) {
-        if (!isContinueStream && hasToolCalls && choice.finish_reason === 'tool_calls') {
-          yield formatSseEvent(SSE_EVENT_TOOL_CALL, '正在更新会话笔记...');
-        } else {
-          yield formatSseEvent(SSE_EVENT_FINISH, undefined, {
-            finish_reason: choice.finish_reason,
-          } satisfies FinishData);
-        }
-      }
-    }
-
-    if (chunk.usage) {
-      const usageData = extractUsageData(chunk.usage as DeepSeekUsage);
-      yield formatSseEvent(
-        SSE_EVENT_USAGE,
-        undefined,
-        usageData as unknown as Record<string, unknown>,
-      );
-    }
-  }
-
-  return { hasToolCalls, reasoningContentAccumulator, textContent: textContentAccumulator };
-}
-
-function buildContinueParams(
-  originalParams: Record<string, unknown>,
-  messages: Record<string, unknown>[],
-): ChatCompletionCreateParamsStreaming {
-  const { tools: _tools, messages: _oldMessages, stream: _stream, ...restParams } = originalParams;
-  return {
-    ...restParams,
-    messages: messages as unknown as ChatCompletionCreateParamsStreaming['messages'],
-    stream: true,
-  } as ChatCompletionCreateParamsStreaming;
-}
-
+/**
+ * 流式聊天响应主生成器。
+ * 处理完整的流式生命周期：连接 → 等待提示 → 多轮工具调用循环 → 后采样钩子。
+ * @param params - API 请求参数
+ * @param userId - 用户 ID，用于获取该用户的 API 客户端
+ * @param conversationId - 会话 ID，为空时跳过工具调用和后采样钩子
+ * @param modelId - 模型 ID，用于路由到对应的 Provider
+ */
 export async function* streamResponse(
   params: Record<string, unknown>,
   userId: string,
   conversationId?: string,
+  modelId?: string,
 ): AsyncGenerator<string> {
-  // 使用缓存的客户端，避免每次请求都创建新实例
+  const resolvedModel = modelId ?? (params.model as string) ?? 'deepseek-v4-flash';
+  const provider = resolveProvider(resolvedModel);
+
+  // OpenAI 兼容 Provider：使用原有的流式工具调用循环
+  if (provider.apiMode === 'openai-compatible') {
+    yield* streamResponseOpenAI(params, userId, conversationId, resolvedModel);
+  } else {
+    // 非 OpenAI 兼容 Provider：使用 Transport 的归一化流式接口
+    yield* streamResponseTransport(params, userId, conversationId, resolvedModel);
+  }
+}
+
+/**
+ * OpenAI 兼容 Provider 的流式响应（原有逻辑）
+ */
+async function* streamResponseOpenAI(
+  params: Record<string, unknown>,
+  userId: string,
+  conversationId?: string,
+  modelId?: string,
+): AsyncGenerator<string> {
   let client: OpenAI;
   try {
     client = await getOrCreateClient(userId);
   } catch {
     yield formatSseEvent(
       SSE_EVENT_ERROR,
-      'DeepSeek API Key 未配置，请在设置中配置或设置环境变量 DEEPSEEK_API_KEY',
+      'API Key 未配置，请在设置中配置或设置环境变量',
     );
     return;
   }
 
   yield formatSseEvent(SSE_EVENT_CONNECTED, 'ok');
 
-  // 如果 3 秒内没有收到第一个 chunk，发送等待提示
+  // 等待事件队列：定时器将 SSE 事件推入此数组，生成器在关键节点 drain 并 yield
   let hasReceivedFirstChunk = false;
+  const pendingWaitingEvents: string[] = [];
+
+  // 3 秒内未收到首个 chunk → 发送排队等待提示
   const waitingTimer = setTimeout(() => {
     if (!hasReceivedFirstChunk) {
-      logger.info('DeepSeek 请求正在排队等待服务器响应...');
+      logger.info('AI 请求正在排队等待服务器响应...');
+      pendingWaitingEvents.push(
+        formatSseEvent(SSE_EVENT_WAITING, undefined, { status: 'queued', message: '请求正在排队等待服务器响应...' }),
+      );
     }
   }, 3000);
 
-  // 如果 8 秒后仍未收到响应，向前端发送等待状态提示
+  // 8 秒仍未收到 → 发送服务器繁忙提示
   const userWaitingTimer = setTimeout(() => {
     if (!hasReceivedFirstChunk) {
-      logger.info('DeepSeek 服务器繁忙，请求正在排队中...');
+      logger.info('AI 服务器繁忙，请求正在排队中...');
+      pendingWaitingEvents.push(
+        formatSseEvent(SSE_EVENT_WAITING, undefined, { status: 'busy', message: '服务器繁忙，请求正在排队中...' }),
+      );
     }
   }, 8000);
 
@@ -193,45 +111,19 @@ export async function* streamResponse(
       request_json: JSON.stringify(requestParams, null, 2),
     });
 
-    const stream = await client.chat.completions.create(requestParams);
+    // 委托给多轮工具调用循环，传入等待事件队列和首 chunk 回调
+    const loopStats = { toolCallCount: 0 };
+    yield* streamingToolCallLoop(
+      client,
+      params,
+      conversationId,
+      undefined, // 使用默认 maxTurns
+      () => { hasReceivedFirstChunk = true; },
+      pendingWaitingEvents,
+      loopStats,
+    );
 
-    const toolCallsAccumulator: ToolCallAccumulator = {};
-    let reasoningContentAccumulator = '';
-
-    const firstResult = yield* processStreamChunks(stream, toolCallsAccumulator, '', false, () => {
-      hasReceivedFirstChunk = true;
-    });
-    reasoningContentAccumulator = firstResult.reasoningContentAccumulator;
-
-    if (firstResult.hasToolCalls && conversationId != null) {
-      const memoryRoot = env.MEMORY_ROOT_DIR;
-
-      const toolResults = executeToolCalls(toolCallsAccumulator, conversationId, memoryRoot);
-      const allToolCalls = Object.keys(toolCallsAccumulator)
-        .sort((a, b) => Number(a) - Number(b))
-        .map((idx) => toolCallsAccumulator[Number(idx)]);
-
-      const toolResultMessages = buildToolResultMessages(toolCallsAccumulator, toolResults);
-
-      const messages = params.messages as Record<string, unknown>[];
-      const assistantMessage: Record<string, unknown> = {
-        role: 'assistant',
-        content: firstResult.textContent || null,
-        tool_calls: allToolCalls,
-      };
-      if (reasoningContentAccumulator) {
-        assistantMessage.reasoning_content = reasoningContentAccumulator;
-      }
-      messages.push(assistantMessage);
-      messages.push(...toolResultMessages);
-
-      const continueParams = buildContinueParams(params, messages);
-      const continueStream = await client.chat.completions.create(continueParams);
-
-      const continueToolCallsAccumulator: ToolCallAccumulator = {};
-      yield* processStreamChunks(continueStream, continueToolCallsAccumulator, '', true);
-    }
-
+    // 流式响应结束后执行后采样钩子（压缩、会话笔记、梦境）
     if (conversationId != null) {
       try {
         const hookEvents: string[] = [];
@@ -240,14 +132,19 @@ export async function* streamResponse(
             conversationId,
             userId,
             model: params.model as string,
-            toolCallCountThisTurn: Object.keys(toolCallsAccumulator).length,
+            toolCallCountThisTurn: loopStats.toolCallCount,
           },
           (eventData: string) => {
             hookEvents.push(eventData);
           },
         );
         for (const eventData of hookEvents) {
-          yield `data: ${eventData}\n\n`;
+          try {
+            const parsed = JSON.parse(eventData) as { type: string; content?: string; data?: Record<string, unknown> };
+            yield formatSseEvent(parsed.type, parsed.content, parsed.data);
+          } catch {
+            yield `data: ${eventData}\n\n`;
+          }
         }
       } catch (e) {
         logger.warn('后采样钩子执行失败: %s', e);
@@ -256,15 +153,183 @@ export async function* streamResponse(
   } catch (error: unknown) {
     if (error instanceof APIError) {
       const mapped = mapApiError(error);
-      logger.error('DeepSeek API 错误 [%d]: %s', mapped.statusCode, mapped.message);
+      logger.error('AI API 错误 [%d]: %s', mapped.statusCode, mapped.message);
       yield formatSseEvent(SSE_EVENT_ERROR, mapped.message);
     } else {
-      logger.error('DeepSeek 流式请求异常: %s', error);
-      const message = error instanceof Error ? error.message : String(error);
-      yield formatSseEvent(SSE_EVENT_ERROR, `DeepSeek 请求失败: ${message}`);
+      logger.error('AI 流式请求异常: %s', error);
+      yield formatSseEvent(SSE_EVENT_ERROR, 'AI 请求失败，请稍后重试');
     }
   } finally {
     clearTimeout(waitingTimer);
     clearTimeout(userWaitingTimer);
   }
+}
+
+/**
+ * 非 OpenAI 兼容 Provider 的流式响应（使用 Transport 归一化接口）
+ */
+async function* streamResponseTransport(
+  params: Record<string, unknown>,
+  userId: string,
+  conversationId?: string,
+  modelId?: string,
+): AsyncGenerator<string> {
+  const resolvedModel = modelId ?? (params.model as string) ?? 'deepseek-v4-flash';
+
+  let transport: ProviderTransport;
+  try {
+    transport = await getTransportForModel(resolvedModel, userId);
+  } catch {
+    yield formatSseEvent(
+      SSE_EVENT_ERROR,
+      'API Key 未配置，请在设置中配置或设置环境变量',
+    );
+    return;
+  }
+
+  yield formatSseEvent(SSE_EVENT_CONNECTED, 'ok');
+
+  // 构建归一化请求参数
+  const chatParams = buildTransportParams(params, resolvedModel);
+
+  // 发送完整请求 JSON 供前端监控面板显示
+  yield formatSseEvent(SSE_EVENT_FULL_REQUEST, undefined, {
+    request_json: JSON.stringify({ ...chatParams, stream: true }, null, 2),
+  });
+
+  let hasReceivedFirstChunk = false;
+  const pendingWaitingEvents: string[] = [];
+
+  const waitingTimer = setTimeout(() => {
+    if (!hasReceivedFirstChunk) {
+      pendingWaitingEvents.push(
+        formatSseEvent(SSE_EVENT_WAITING, undefined, { status: 'queued', message: '请求正在排队等待服务器响应...' }),
+      );
+    }
+  }, 3000);
+
+  const userWaitingTimer = setTimeout(() => {
+    if (!hasReceivedFirstChunk) {
+      pendingWaitingEvents.push(
+        formatSseEvent(SSE_EVENT_WAITING, undefined, { status: 'busy', message: '服务器繁忙，请求正在排队中...' }),
+      );
+    }
+  }, 8000);
+
+  try {
+    const stream = transport.createStreamingChat({ ...chatParams, stream: true });
+
+    for await (const chunk of stream) {
+      if (!hasReceivedFirstChunk) {
+        hasReceivedFirstChunk = true;
+      }
+
+      // drain 等待事件
+      while (pendingWaitingEvents.length > 0) {
+        yield pendingWaitingEvents.shift()!;
+      }
+
+      // 将归一化流式块转换为 SSE 事件
+      switch (chunk.type) {
+        case 'content':
+          yield formatSseEvent('content', chunk.content);
+          break;
+        case 'reasoning':
+          yield formatSseEvent('reasoning_content', chunk.content);
+          break;
+        case 'tool_call_delta':
+          yield formatSseEvent('tool_call', '正在调用工具...');
+          break;
+        case 'usage':
+          yield formatSseEvent('usage', undefined, chunk.usage as unknown as Record<string, unknown>);
+          break;
+        case 'finish':
+          yield formatSseEvent('finish', undefined, { finish_reason: chunk.finishReason });
+          break;
+      }
+    }
+
+    // 后采样钩子
+    if (conversationId != null) {
+      try {
+        const hookEvents: string[] = [];
+        await runPostSamplingHooks(
+          {
+            conversationId,
+            userId,
+            model: resolvedModel,
+            toolCallCountThisTurn: 0,
+          },
+          (eventData: string) => {
+            hookEvents.push(eventData);
+          },
+        );
+        for (const eventData of hookEvents) {
+          try {
+            const parsed = JSON.parse(eventData) as { type: string; content?: string; data?: Record<string, unknown> };
+            yield formatSseEvent(parsed.type, parsed.content, parsed.data);
+          } catch {
+            yield `data: ${eventData}\n\n`;
+          }
+        }
+      } catch (e) {
+        logger.warn('后采样钩子执行失败: %s', e);
+      }
+    }
+  } catch (error: unknown) {
+    if (error && typeof error === 'object' && 'status' in error) {
+      const mapped = mapApiError(error);
+      logger.error('AI API 错误 [%d]: %s', mapped.statusCode, mapped.message);
+      yield formatSseEvent(SSE_EVENT_ERROR, mapped.message);
+    } else {
+      logger.error('AI 流式请求异常: %s', error);
+      yield formatSseEvent(SSE_EVENT_ERROR, 'AI 请求失败，请稍后重试');
+    }
+  } finally {
+    clearTimeout(waitingTimer);
+    clearTimeout(userWaitingTimer);
+  }
+}
+
+/**
+ * 将 OpenAI 格式的 params 转换为 Transport 归一化参数
+ */
+function buildTransportParams(
+  params: Record<string, unknown>,
+  modelId: string,
+): import('../../core/ai/providers/types.js').TransportChatParams {
+  const messages = (params.messages as Array<Record<string, unknown>>).map((m) => ({
+    role: m.role as string,
+    content: (m.content as string) ?? '',
+    ...(m.tool_calls ? { toolCalls: m.toolCalls ?? m.tool_calls } : {}),
+    ...(m.tool_call_id ? { toolCallId: m.tool_call_id as string } : {}),
+  })) as import('../../core/ai/providers/types.js').NormalizedMessage[];
+
+  const tools = params.tools
+    ? (params.tools as Array<Record<string, unknown>>).map((t) => {
+        const fn = (t.function ?? {}) as Record<string, unknown>;
+        return {
+          type: 'function' as const,
+          function: {
+            name: (fn.name as string) ?? '',
+            description: fn.description as string | undefined,
+            parameters: fn.parameters as Record<string, unknown> | undefined,
+          },
+        };
+      })
+    : undefined;
+
+  return {
+    model: modelId,
+    messages,
+    tools,
+    temperature: params.temperature as number | undefined,
+    maxTokens: params.max_tokens as number | undefined,
+    topP: params.top_p as number | undefined,
+    stream: true,
+    thinking: params.thinking as { type: 'enabled' | 'disabled' } | undefined,
+    reasoningEffort: params.reasoning_effort as string | undefined,
+    responseFormat: params.response_format as Record<string, unknown> | undefined,
+    stop: params.stop as string[] | undefined,
+  };
 }

@@ -1,4 +1,10 @@
-// 文件读取工具：按路径读取文件，支持行号偏移和范围截取，解析 frontmatter
+/**
+ * 文件读取工具核心实现
+ *
+ * 按路径读取文件内容，支持行号偏移和范围截取，
+ * 自动解析 frontmatter 并生成记忆新鲜度提示。
+ * 输出格式为带行号的文本（行号右对齐 + → 分隔符）。
+ */
 import fs from 'fs';
 import { validateCommonPath, resolveVirtualPath } from '../../core/validation/path.js';
 import { parseFrontmatter } from '../../core/validation/frontmatter.js';
@@ -12,6 +18,14 @@ import {
 } from '../types.js';
 import type { CatRequest, CatResult, CatError, CatResponse } from '../types.js';
 
+/**
+ * 按行号范围截取文本并添加行号格式化。
+ *
+ * @param text     - 完整文件内容
+ * @param offset   - 起始行号（从 1 开始），默认 1
+ * @param limit    - 读取行数，0 表示读取到末尾
+ * @returns [格式化后的内容, 文件总行数, 结束行号]
+ */
 export function readFileInRange(
   text: string,
   offset: number = 1,
@@ -39,6 +53,15 @@ export function readFileInRange(
   return [formattedLines.join('\n'), totalLines, endLine];
 }
 
+/**
+ * 生成记忆新鲜度提示文本。
+ *
+ * 根据文件的最后修改时间计算距今天数，
+ * 超过 0 天时返回过时警告，提醒 AI 验证内容有效性。
+ *
+ * @param mtimeMs - 文件最后修改时间的毫秒时间戳
+ * @returns 新鲜度提示文本，刚更新时返回空字符串
+ */
 export function memoryFreshnessNote(mtimeMs: number): string {
   const nowMs = Date.now();
   const days = Math.max(0, Math.floor((nowMs - mtimeMs) / 86400000));
@@ -49,6 +72,15 @@ export function memoryFreshnessNote(mtimeMs: number): string {
   return `此记忆已 ${days} 天未更新，内容可能已过时，请验证后再使用`;
 }
 
+/**
+ * 执行文件读取操作。
+ *
+ * 流程：验证路径安全性 → 检查文件存在性和类型 → 检查文件大小 →
+ * 读取内容 → 解析 frontmatter → 按范围截取并格式化 → 生成新鲜度提示
+ *
+ * @param request - 包含文件路径和可选范围参数的请求
+ * @returns 文件内容或错误信息
+ */
 export function executeCat(request: CatRequest): CatResponse {
   const virtual = resolveVirtualPath(request.file_path, request.memoryRoot);
   const memoryRoot = virtual.physicalRoot;
@@ -113,6 +145,7 @@ export function executeCat(request: CatRequest): CatResponse {
   } as CatResult;
 }
 
+/** 根据错误代码生成人类可读的错误消息 */
 function errorMessage(errorCode: string, filePath: string): string {
   const messages: Record<string, string> = {
     [PATH_UNSAFE]: `路径不安全: ${filePath}`,

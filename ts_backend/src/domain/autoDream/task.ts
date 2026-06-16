@@ -1,13 +1,24 @@
 /**
- * 梦境任务状态管理。维护任务的阶段、状态、轮次和文件触碰记录，支持注册/追加/完成/失败/终止。
+ * 梦境任务状态管理。
+ * 维护任务的阶段、状态、轮次和文件触碰记录，
+ * 支持注册/追加/完成/失败/终止等状态转换。
+ * 所有函数均为纯函数，返回新的状态对象，不修改输入。
  */
 import { randomUUID } from 'crypto';
 import { createLogger } from '../../core/logger/index.js';
 import type { DreamPhase, DreamTurn, DreamTaskState } from './types.js';
 
 const logger = createLogger('DreamTask');
+
+/** 轮次历史保留上限，超出后丢弃最早的轮次 */
 const MAX_TURNS = 30;
 
+/**
+ * 注册新的梦境任务，创建初始状态。
+ * @param sessionsReviewing - 待审查的会话数量
+ * @param priorMtime - 获取锁时记录的原始 mtime，用于失败时回滚
+ * @returns 初始状态的 DreamTaskState
+ */
 export function registerDreamTask(sessionsReviewing: number, priorMtime: number): DreamTaskState {
   const task: DreamTaskState = {
     id: randomUUID(),
@@ -26,6 +37,15 @@ export function registerDreamTask(sessionsReviewing: number, priorMtime: number)
   return task;
 }
 
+/**
+ * 追加一轮交互记录到任务状态。
+ * 空轮次（无文本、无工具调用、无新文件触碰）将被忽略。
+ * @param task - 当前任务状态
+ * @param text - 本轮输出文本
+ * @param toolUseCount - 本轮工具调用次数
+ * @param touchedPaths - 本轮触碰的文件路径列表
+ * @returns 更新后的任务状态
+ */
 export function addDreamTurn(
   task: DreamTaskState,
   text: string,
@@ -35,13 +55,16 @@ export function addDreamTurn(
   const existingSet = new Set(task.filesTouched);
   const newPaths = touchedPaths.filter((p) => !existingSet.has(p));
 
+  // 空轮次不产生状态变更
   if (text === '' && toolUseCount === 0 && newPaths.length === 0) {
     return task;
   }
 
   const newTurn: DreamTurn = { text, toolUseCount };
+  // 保留最近 MAX_TURNS-1 轮历史，加上当前轮
   const turns = task.turns.slice(-(MAX_TURNS - 1)).concat(newTurn);
 
+  // 有新文件触碰时阶段升级为 updating
   const phase: DreamPhase = newPaths.length > 0 ? 'updating' : task.phase;
   const filesTouched = [...task.filesTouched, ...newPaths];
 
@@ -52,6 +75,11 @@ export function addDreamTurn(
   return { ...task, turns, phase, filesTouched };
 }
 
+/**
+ * 标记任务为已完成。
+ * @param task - 当前任务状态
+ * @returns 状态为 completed 的新任务对象
+ */
 export function completeDreamTask(task: DreamTaskState): DreamTaskState {
   const updated: DreamTaskState = {
     ...task,
@@ -63,6 +91,11 @@ export function completeDreamTask(task: DreamTaskState): DreamTaskState {
   return updated;
 }
 
+/**
+ * 标记任务为失败。
+ * @param task - 当前任务状态
+ * @returns 状态为 failed 的新任务对象
+ */
 export function failDreamTask(task: DreamTaskState): DreamTaskState {
   const updated: DreamTaskState = {
     ...task,
@@ -74,6 +107,11 @@ export function failDreamTask(task: DreamTaskState): DreamTaskState {
   return updated;
 }
 
+/**
+ * 终止正在运行的任务。
+ * @param task - 当前任务状态
+ * @returns 状态为 killed 的新任务对象
+ */
 export function killDreamTask(task: DreamTaskState): DreamTaskState {
   const updated: DreamTaskState = {
     ...task,
@@ -85,6 +123,11 @@ export function killDreamTask(task: DreamTaskState): DreamTaskState {
   return updated;
 }
 
+/**
+ * 生成任务摘要，用于 API 响应和事件广播。
+ * @param task - 任务状态
+ * @returns 序列化后的任务摘要对象
+ */
 export function getTaskSummary(task: DreamTaskState) {
   return {
     id: task.id,

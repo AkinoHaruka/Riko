@@ -1,4 +1,16 @@
-// 文件写入工具：创建或覆盖写入文件，支持路径安全验证和原子写入
+/**
+ * 文件写入工具核心实现
+ *
+ * 创建新文件或完全覆盖已有文件，支持路径安全验证和原子写入。
+ * 写入前会保存旧内容用于生成 unified diff，写入后自动创建不存在的父目录。
+ *
+ * 安全机制：
+ * - 路径必须经过 validateCommonPath 验证，防止目录遍历
+ * - 写入内容大小超过 MAX_CONTENT_SIZE 时拒绝操作
+ * - 目标文件超过 MAX_FILE_SIZE 时拒绝覆盖
+ * - 目标路径是目录时拒绝写入
+ * - 使用原子写入（先写临时文件再重命名）防止写入中断导致数据损坏
+ */
 import fs from 'fs';
 import path from 'path';
 import {
@@ -24,6 +36,16 @@ interface WriteContext {
 
 type ValidateWriteResult = [WriteContext | Record<string, unknown>, string | null];
 
+/**
+ * 写入操作的前置校验。
+ *
+ * 校验顺序：路径安全性 → 写入内容大小 → 目标路径类型 → 目标文件大小
+ *
+ * @param filePath   - 目标文件路径
+ * @param content    - 要写入的内容
+ * @param memoryRoot - 允许操作的根目录
+ * @returns [写入上下文, 错误代码] — 校验通过时错误代码为 null
+ */
 export function validateWrite(
   filePath: string,
   content: string,
@@ -61,6 +83,14 @@ export function validateWrite(
   ];
 }
 
+/**
+ * 执行文件写入操作。
+ *
+ * 流程：校验 → 读取旧内容 → 确保父目录存在 → 原子写入 → 生成 diff
+ *
+ * @param request - 写入请求参数
+ * @returns 写入成功或失败的结果
+ */
 export function executeWrite(request: WriteRequest): WriteResponse {
   const [context, error] = validateWrite(request.file_path, request.content, request.memoryRoot);
 
@@ -91,6 +121,7 @@ export function executeWrite(request: WriteRequest): WriteResponse {
 
   const diff = generateDiff(request.file_path, oldContent ?? '', request.content);
 
+  // 计算写入行数，排除末尾空行
   const linesWritten =
     request.content.length > 0
       ? request.content.split('\n').length - (request.content.endsWith('\n') ? 1 : 0)
@@ -106,12 +137,12 @@ export function executeWrite(request: WriteRequest): WriteResponse {
     type: writeType,
     file_path: request.file_path,
     diff,
-    old_content: oldContent,
     lines_written: linesWritten,
     message,
   } satisfies WriteResult;
 }
 
+/** 根据错误代码生成人类可读的错误消息 */
 export function errorMessage(errorCode: string, filePath: string): string {
   const messages: Record<string, string> = {
     [PATH_UNSAFE]: `路径不安全: ${filePath}`,

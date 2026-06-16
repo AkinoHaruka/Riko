@@ -1,3 +1,8 @@
+/**
+ * 上下文压缩领域模块入口。
+ * 统一导出压缩相关的类型定义、Token 估算、提示词构建、
+ * 触发策略、微型压缩、自动压缩决策和核心压缩服务。
+ */
 export type {
   CompactMessage,
   CompactionResult,
@@ -14,7 +19,6 @@ export {
   getAutoCompactThreshold,
   calculateTokenWarningState,
   splitMessagesByCompactBoundary,
-  MODEL_CONTEXT_WINDOWS,
   MAX_OUTPUT_TOKENS_FOR_SUMMARY,
   AUTOCOMPACT_BUFFER_TOKENS,
   WARNING_THRESHOLD_BUFFER_TOKENS,

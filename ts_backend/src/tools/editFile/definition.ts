@@ -1,3 +1,9 @@
+/**
+ * Edit 工具的 OpenAI function schema 定义
+ *
+ * 声明 AI 可调用的 Edit 工具的参数结构，
+ * 包括文件路径、待替换文本、替换文本和 replace_all 开关。
+ */
 export function buildEditToolDefinition() {
   return {
     type: 'function' as const,

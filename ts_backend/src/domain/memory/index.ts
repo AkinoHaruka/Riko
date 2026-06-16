@@ -1,3 +1,7 @@
+/**
+ * 记忆领域模块入口。
+ * 统一导出记忆相关的类型定义、数据访问层和服务层函数。
+ */
 export type { Memory, MemoryCreateRequest } from './types.js';
 export {
   findAll,
@@ -13,6 +17,6 @@ export {
   searchMemories,
   createMemory,
   deleteMemory,
-  deleteBySource as deleteMemoriesBySource,
+  deleteMemoriesBySource,
   clearMemories,
 } from './service.js';

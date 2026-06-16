@@ -1,4 +1,13 @@
-// 聊天补全 API：处理流式(SSE)和非流式聊天请求，以及模型列表查询
+/**
+ * 聊天补全路由模块
+ *
+ * 职责：处理 AI 聊天补全请求（流式 SSE 和非流式），以及可用模型列表查询。
+ * 所有端点需要认证（由全局 authMiddleware 统一处理）。
+ *
+ * 端点概览：
+ *   POST /chat/completions  — 聊天补全（支持流式 SSE 和非流式）
+ *   GET  /models            — 获取可用模型列表
+ */
 import type { FastifyInstance } from 'fastify';
 import {
   chatCompletionStream,
@@ -9,11 +18,32 @@ import type { ChatCompletionRequest } from '../../domain/chat/types.js';
 import { getCurrentUser } from '../../core/middleware/index.js';
 import { chatCompletionSchema, errorResponse } from '../../core/validation/schemas.js';
 
-function formatSseError(message: string): string {
-  return `data: ${JSON.stringify({ type: 'error', content: message })}\n\n`;
+/** 将错误信息格式化为 SSE data 事件，供前端流式解析 */
+function formatSseError(code: string, message: string): string {
+  return `data: ${JSON.stringify({ type: 'error', code, content: message })}\n\n`;
 }
 
 export function registerChatRoutes(app: FastifyInstance): void {
+  /**
+   * POST /chat/completions
+   * 聊天补全核心端点，支持流式(SSE)和非流式两种模式。
+   *
+   * 限流：每分钟最多 20 次
+   *
+   * 请求体：
+   *   - messages: Array<{ role: string, content: string }> — 对话消息列表（必填）
+   *   - model: string — 模型名称（必填）
+   *   - stream: boolean — 是否流式响应，默认 true
+   *   - temperature, max_tokens, top_p 等可选模型参数
+   *   - conversation_id: string — 关联的会话 ID（可选）
+   *   - system_prompt: string — 自定义系统提示词（可选）
+   *   - thinking, reasoning_effort, response_format, stop 等高级参数
+   *
+   * 流式响应：Content-Type: text/event-stream，逐块发送 SSE 事件
+   * 非流式响应：直接返回完整补全结果 JSON
+   *
+   * @security 通过 getCurrentUser 提取 userId，确保请求关联到已认证用户
+   */
   app.post<{ Body: ChatCompletionRequest }>(
     '/chat/completions',
     {
@@ -35,7 +65,10 @@ export function registerChatRoutes(app: FastifyInstance): void {
                 required: ['role', 'content'],
                 properties: {
                   role: { type: 'string' },
-                  content: { type: 'string' },
+                  content: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+                  tool_calls: { type: 'array', items: {} },
+                  tool_call_id: { type: 'string' },
+                  name: { type: 'string' },
                 },
               },
             },
@@ -45,7 +78,7 @@ export function registerChatRoutes(app: FastifyInstance): void {
             top_p: { type: 'number', minimum: 0, maximum: 1 },
             stream: { type: 'boolean', default: true },
             thinking: { type: 'object' },
-            reasoning_effort: { type: 'string' },
+            reasoning_effort: { type: 'string', enum: ['low', 'medium', 'high', 'max'] },
             response_format: { type: 'object' },
             stop: { type: 'array', items: { type: 'string' } },
             system_prompt: { type: 'string' },
@@ -67,10 +100,12 @@ export function registerChatRoutes(app: FastifyInstance): void {
       const body = parsed.data as ChatCompletionRequest;
 
       if (body.stream !== false) {
+        // 流式模式：手动写入 SSE 响应头，绕过 Fastify 的响应缓冲
         reply.raw.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
+          // @security X-Accel-Buffering: no 禁止 Nginx 等反向代理缓冲 SSE 流
           'X-Accel-Buffering': 'no',
         });
 
@@ -80,18 +115,26 @@ export function registerChatRoutes(app: FastifyInstance): void {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          reply.raw.write(formatSseError(`流式响应异常: ${message}`));
+          // 流式传输中途异常时，通过 SSE error 事件通知前端，而非直接断开连接
+          reply.raw.write(formatSseError('STREAM_ERROR', message));
         } finally {
           reply.raw.end();
         }
         return;
       }
 
+      // 非流式模式：等待完整响应后一次性返回
       const result = await chatCompletionNonStream(body, userId);
       return reply.send(result);
     },
   );
 
+  /**
+   * GET /models
+   * 获取当前用户可用的 AI 模型列表。
+   *
+   * 响应：{ models: Array<ModelInfo> }
+   */
   app.get('/models', async (request, reply) => {
     const userId = getCurrentUser(request).userId;
     const models = await listModels(userId);

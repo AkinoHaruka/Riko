@@ -1,6 +1,8 @@
 /**
  * 会话记忆管理器：负责笔记文件的创建、读取、迁移、存在性判断和触发状态跟踪。
  * 笔记文件存储在 MEMORY_ROOT_DIR/session_memory/ 下，格式为 {conversationId}_{timestamp}.md。
+ *
+ * 文件写入采用 tmp+rename 策略：先写入临时文件，再原子重命名，防止写入中断导致文件损坏。
  */
 import fs from 'fs';
 import path from 'path';
@@ -14,6 +16,17 @@ import { shouldTriggerSessionMemoryInit, shouldTriggerSessionMemoryUpdate } from
 import { isFeatureEnabled } from '../../domain/setting/index.js';
 
 const logger = createLogger('SessionMemoryManager');
+
+/**
+ * @security 清理会话 ID 中的路径分隔符，防止路径遍历攻击。
+ * 拒绝包含 ..、/、\ 的 ID，这些字符可能被利用来访问笔记目录之外的文件。
+ */
+function sanitizeId(id: string): string {
+  if (id.includes('..') || id.includes('/') || id.includes('\\')) {
+    throw new Error(`Invalid conversation ID: contains path separators`);
+  }
+  return id;
+}
 
 /** 会话笔记模板：定义笔记文件的章节结构，用于创建初始笔记文件 */
 export const SESSION_MEMORY_TEMPLATE = `# 会话标题
@@ -59,10 +72,11 @@ export class SessionMemoryManager {
 
   /** 查找指定会话的已有记忆文件（匹配 conv{id}_*.md） */
   findExistingFile(conversationId: string): string | null {
+    const safeId = sanitizeId(conversationId);
     const dir = this._sessionMemoryDir();
     if (!fs.existsSync(dir)) return null;
 
-    const prefix = `${conversationId}_`;
+    const prefix = `${safeId}_`;
     const entries = fs.readdirSync(dir);
     for (const name of entries) {
       if (name.startsWith(prefix) && name.endsWith('.md')) {
@@ -71,7 +85,7 @@ export class SessionMemoryManager {
     }
 
     // 向后兼容：旧格式为 {conversationId}/summary.md
-    const oldPath = path.join(dir, String(conversationId), 'summary.md');
+    const oldPath = path.join(dir, safeId, 'summary.md');
     if (fs.existsSync(oldPath)) {
       return oldPath;
     }
@@ -79,22 +93,29 @@ export class SessionMemoryManager {
     return null;
   }
 
+  /** 获取或生成会话笔记文件路径。已有文件则返回现有路径，否则生成基于时间戳的新路径 */
   getSessionMemoryPath(conversationId: string): string {
-    const existing = this.findExistingFile(conversationId);
+    const safeId = sanitizeId(conversationId);
+    const existing = this.findExistingFile(safeId);
     if (existing) return existing;
 
     // 无现有文件，生成基于时间戳的新文件名
     const ts = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
-    const name = `${conversationId}_${ts}.md`;
+    const name = `${safeId}_${ts}.md`;
     return path.join(this._sessionMemoryDir(), name);
   }
 
+  /** 读取会话笔记内容，文件不存在时返回空字符串 */
   readSessionMemory(conversationId: string): string {
     const filePath = this.findExistingFile(conversationId);
     if (!filePath) return '';
     return fs.readFileSync(filePath, 'utf-8');
   }
 
+  /**
+   * 创建初始会话笔记文件。如果存在旧格式文件（目录/summary.md），自动迁移到新格式。
+   * 返回笔记内容（已有文件返回现有内容，新文件返回模板内容）。
+   */
   createInitialSessionMemory(conversationId: string): string {
     const existing = this.findExistingFile(conversationId);
 
@@ -142,6 +163,13 @@ export class SessionMemoryManager {
     return templateContent;
   }
 
+  /**
+   * 判断是否应启用会话记忆。检查顺序：
+   * 1. 笔记文件是否已存在 → 直接启用
+   * 2. 功能开关是否禁用 → 禁用
+   * 3. 数据库中是否已标记初始化 → 启用
+   * 4. 消息数是否达到触发阈值 → 按结果决定
+   */
   shouldEnable(conversationId: string, messageCount: number, userId?: string): boolean {
     const filePath = this.getSessionMemoryPath(conversationId);
     if (fs.existsSync(filePath)) {
@@ -188,6 +216,12 @@ export class SessionMemoryManager {
     return fallbackMet;
   }
 
+  /**
+   * 判断是否应触发笔记更新。基于 Token 增量和工具调用间隔双重条件。
+   * @param currentTokenCount 当前对话的 Token 总数
+   * @param toolCallCountSinceLastUpdate 自上次更新以来的工具调用总数
+   * @param lastTurnHadToolCalls 上一轮是否有工具调用（有则要求更多间隔才触发）
+   */
   shouldTriggerUpdate(
     conversationId: string,
     currentTokenCount: number,
@@ -206,6 +240,7 @@ export class SessionMemoryManager {
     );
   }
 
+  /** 从数据库读取触发状态快照，无记录时返回零值默认 */
   getTriggerState(conversationId: string): SessionMemoryTriggerState {
     const db = getDb();
     const row = db
@@ -231,6 +266,10 @@ export class SessionMemoryManager {
     };
   }
 
+  /**
+   * 获取或创建会话笔记。先判断是否应启用，启用则创建/读取笔记文件。
+   * @returns [笔记内容, 是否启用]
+   */
   getOrCreateSessionMemory(
     conversationId: string,
     messageCount: number,
@@ -245,6 +284,11 @@ export class SessionMemoryManager {
     return [content, true];
   }
 
+  /**
+   * 更新会话笔记状态到数据库。使用 UPSERT 保证幂等性。
+   * @param tokenCount 当前笔记的 Token 数
+   * @param toolCallCount 当前工具调用计数，未提供时保持原值
+   */
   updateState(conversationId: string, tokenCount: number, toolCallCount?: number): void {
     const db = getDb();
     const currentState = this.getTriggerState(conversationId);

@@ -1,16 +1,16 @@
 /**
- * 上下文压缩服务。支持三种压缩策略：legacy、micro_compact、sub_agent。
+ * 上下文压缩服务。
+ * 支持三种压缩策略：legacy、micro_compact、sub_agent。
  * 负责检测分界、生成摘要、清理工具结果、事务性替换消息。
+ * 当前主要使用 sub_agent 策略，由 AI 生成精简摘要。
  */
 import type {
   CompactMessage,
   CompactionResult,
   AutoCompactResult,
-  CompactBoundaryMetadata,
 } from './types.js';
 import {
   estimateTextTokens,
-  estimateMessageTokens,
   estimateMessagesTokens,
   getAutoCompactThreshold,
   splitMessagesByCompactBoundary,
@@ -21,11 +21,17 @@ import {
   getCompactUserSummaryMessage,
   buildCompactSubAgentPrompt,
 } from './prompt.js';
+import {
+  messagesToCompactMessages,
+  stripImagesFromMessages,
+  truncateHeadForPtlRetry,
+  createCompactBoundaryMessage,
+  selectRecentMessages,
+} from './helpers.js';
 import { getOrCreateClient } from '../../core/ai/client.js';
 import { createLogger } from '../../core/logger/index.js';
 import { SessionMemoryManager } from '../../domain/sessionMemory/manager.js';
 import { listByConversation } from '../../domain/message/repository.js';
-import type { Message } from '../../domain/message/types.js';
 import { eventManager } from '../../core/events/manager.js';
 import { recordActivity } from '../../domain/monitor/service.js';
 import {
@@ -42,157 +48,47 @@ import type {
   SubAgentPromptParts,
   SubAgentTrace,
 } from '../../domain/subAgent/types.js';
-import { getParamNumberWithDefault, PARAM_KEYS } from '../../domain/setting/index.js';
 import { loadMainPrompt, loadToolRules, loadPersistentMemory } from '../../prompts/loader.js';
+import { getParamValue } from '../../domain/setting/index.js';
 
 const logger = createLogger('compact:service');
 
+/** 默认模型标识，getParamValue 未找到用户设置时使用 */
+const FALLBACK_MODEL = 'deepseek-v4-pro';
+
+/** PromptTooLong 错误时的最大重试次数 */
 export const MAX_PTL_RETRIES = 3;
+/** 压缩摘要的最大输出 Token 数 */
 export const COMPACT_MAX_OUTPUT_TOKENS = 20000;
+/** 压缩后保留的最大文件附件数 */
 export const POST_COMPACT_MAX_FILES = 5;
+/** 压缩后附件的总 Token 预算 */
 export const POST_COMPACT_TOKEN_BUDGET = 50000;
+/** 单个附件的最大 Token 数 */
 export const POST_COMPACT_MAX_TOKENS_PER_FILE = 5000;
+/** 会话笔记附件的 Token 预算 */
 export const POST_COMPACT_SESSION_NOTES_TOKEN_BUDGET = 12000;
 
-const SYNTHETIC_USER_MARKER: CompactMessage = {
-  role: 'user',
-  content: '[Previous conversation truncated]',
-};
+// ─── 工具函数已迁移至 ./helpers.ts ───
+export {
+  messagesToCompactMessages,
+  stripImagesFromMessages,
+  groupMessagesByApiRound,
+  truncateHeadForPtlRetry,
+  createCompactBoundaryMessage,
+  selectRecentMessages,
+} from './helpers.js';
 
-export function messagesToCompactMessages(messages: Message[]): CompactMessage[] {
-  return messages.map((m) => {
-    const result: CompactMessage = { role: m.role, content: m.content };
-    if (m.reasoning_content) {
-      result.reasoning_content = m.reasoning_content;
-    }
-    if (m.is_compact_summary) {
-      result.is_compact_summary = Boolean(m.is_compact_summary);
-    }
-    if (m.compact_metadata) {
-      result.compact_metadata = m.compact_metadata;
-    }
-    if (m.created_at) {
-      result.created_at = m.created_at;
-    }
-    return result;
-  });
-}
-
-export function stripImagesFromMessages(messages: CompactMessage[]): CompactMessage[] {
-  const result: CompactMessage[] = messages.map((m) => ({ ...m }));
-  for (const msg of result) {
-    if (msg.role !== 'user') {
-      continue;
-    }
-    let content = msg.content;
-    if (typeof content !== 'string') {
-      continue;
-    }
-    content = content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[image]');
-    if (content.length > 10000 && /[A-Za-z0-9+/=]{10000,}/.test(content)) {
-      content = content.replace(/[A-Za-z0-9+/=]{10000,}/g, '[image]');
-    }
-    msg.content = content;
-  }
-  return result;
-}
-
-export function groupMessagesByApiRound(messages: CompactMessage[]): CompactMessage[][] {
-  if (messages.length === 0) {
-    return [];
-  }
-  const groups: CompactMessage[][] = [];
-  let current: CompactMessage[] = [];
-  for (const msg of messages) {
-    if (msg.role === 'user' && current.length > 0) {
-      groups.push(current);
-      current = [];
-    }
-    current.push(msg);
-  }
-  if (current.length > 0) {
-    groups.push(current);
-  }
-  return groups;
-}
-
-export function truncateHeadForPtlRetry(
-  messages: CompactMessage[],
-  tokenGap?: number,
-): CompactMessage[] | null {
-  const groups = groupMessagesByApiRound(messages);
-  if (groups.length < 2) {
-    return null;
-  }
-  let remaining: CompactMessage[][];
-  if (tokenGap !== undefined) {
-    let dropCount = 0;
-    let accumulated = 0;
-    for (let i = 0; i < groups.length; i++) {
-      if (accumulated >= tokenGap) {
-        break;
-      }
-      accumulated += groups[i].reduce((sum, m) => sum + estimateTextTokens(m.content ?? ''), 0);
-      dropCount = i + 1;
-    }
-    remaining = groups.slice(dropCount);
-  } else {
-    const dropCount = Math.max(1, Math.floor(groups.length / 5));
-    remaining = groups.slice(dropCount);
-  }
-  if (remaining.length === 0) {
-    remaining = [groups[groups.length - 1]];
-  }
-  const flat: CompactMessage[] = remaining.flat();
-  if (flat.length > 0 && flat[0].role === 'assistant') {
-    return [{ ...SYNTHETIC_USER_MARKER }, ...flat];
-  }
-  return flat;
-}
-
-export function createCompactBoundaryMessage(
-  trigger: 'auto' | 'manual',
-  preCompactTokens: number,
-  preCompactMessageCount: number,
-  postCompactRecentTokens?: number,
-): CompactMessage {
-  const metadata: CompactBoundaryMetadata = {
-    type: 'compact_boundary',
-    trigger,
-    preCompactTokenCount: preCompactTokens,
-    preCompactMessageCount,
-    timestamp: new Date().toISOString(),
-    compactStrategy: 'sub_agent',
-    post_compact_recent_tokens: postCompactRecentTokens,
-  };
-  return {
-    role: 'system',
-    content: '',
-    compact_metadata: JSON.stringify(metadata),
-  };
-}
-
-export function selectRecentMessages(messages: CompactMessage[], userId: string): CompactMessage[] {
-  const recentDialogueTokens = getParamNumberWithDefault(
-    userId,
-    PARAM_KEYS.COMPACT_RECENT_DIALOGUE_TOKENS,
-  );
-  if (messages.length === 0) {
-    return [];
-  }
-  let accumulated = 0;
-  let cutIndex = messages.length;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    accumulated += estimateMessageTokens(messages[i]);
-    // 使用与 estimateMessagesTokens 一致的 4/3 开销因子
-    if (Math.ceil((accumulated * 4) / 3) >= recentDialogueTokens) {
-      cutIndex = i;
-      break;
-    }
-  }
-  return messages.slice(cutIndex);
-}
-
+/**
+ * 构建压缩后的完整结果对象。
+ * @param newCompactSummary - 新的压缩摘要文本
+ * @param recentMessages - 保留的最近消息
+ * @param preCompactTokenCount - 压缩前 Token 数
+ * @param isAutoCompact - 是否为自动压缩
+ * @param userId - 用户 ID
+ * @param preCompactMessageCount - 压缩前消息数
+ * @returns 完整的压缩结果
+ */
 export function buildPostCompactResult(
   newCompactSummary: string,
   recentMessages: CompactMessage[],
@@ -200,6 +96,7 @@ export function buildPostCompactResult(
   isAutoCompact: boolean,
   userId: string,
   preCompactMessageCount: number,
+  model: string,
 ): CompactionResult {
   const recentTokens = estimateMessagesTokens(recentMessages);
   const boundaryMarker = createCompactBoundaryMessage(
@@ -232,7 +129,8 @@ export function buildPostCompactResult(
 
   const postCompactMessages = buildPostCompactMessages(result);
   const truePostCompactTokenCount = estimateMessagesTokens(postCompactMessages);
-  const willRetrigger = truePostCompactTokenCount > getAutoCompactThreshold('deepseek-v4-pro');
+  // 压缩后仍超过阈值，下一轮将再次触发压缩
+  const willRetrigger = truePostCompactTokenCount > getAutoCompactThreshold(model);
 
   result.postCompactTokenCount = truePostCompactTokenCount;
   result.truePostCompactTokenCount = truePostCompactTokenCount;
@@ -241,6 +139,15 @@ export function buildPostCompactResult(
   return result;
 }
 
+/**
+ * 通过流式 API 生成压缩摘要（legacy 策略）。
+ * 遇到 PromptTooLong 错误时自动截断头部重试。
+ * @param messages - 待压缩的消息列表
+ * @param model - 使用的模型
+ * @param userId - 用户 ID
+ * @param customInstructions - 自定义压缩指令（可选）
+ * @returns 格式化后的压缩摘要文本
+ */
 export async function streamCompactSummary(
   messages: CompactMessage[],
   model: string,
@@ -267,6 +174,7 @@ export async function streamCompactSummary(
 
       const rawSummary = response.choices[0]?.message?.content ?? '';
 
+      // AI 返回 PromptTooLong 前缀时，截断头部重试
       if (rawSummary.startsWith('PromptTooLong')) {
         const truncated = truncateHeadForPtlRetry(apiMessages.slice(1));
         if (truncated === null) {
@@ -294,6 +202,7 @@ export async function streamCompactSummary(
   throw new RuntimeError(`Compact summary failed after ${MAX_PTL_RETRIES} attempts`);
 }
 
+/** 运行时错误，用于压缩过程中的异常 */
 export class RuntimeError extends Error {
   constructor(message: string) {
     super(message);
@@ -301,6 +210,15 @@ export class RuntimeError extends Error {
   }
 }
 
+/**
+ * 创建压缩后的会话笔记附件。
+ * 从会话笔记文件中读取内容，按 Token 预算截断后作为附件消息返回。
+ * @param conversationId - 会话 ID
+ * @param _maxFiles - 最大文件数（当前未使用）
+ * @param _maxTokensPerFile - 单文件最大 Token 数（当前未使用）
+ * @param _totalBudget - 总 Token 预算（当前未使用）
+ * @returns 附件消息列表
+ */
 export function createPostCompactFileAttachments(
   conversationId: string,
   _maxFiles: number = POST_COMPACT_MAX_FILES,
@@ -314,6 +232,7 @@ export function createPostCompactFileAttachments(
     return [];
   }
 
+  // 按 Token 预算截断会话笔记内容
   const tokenLimit = POST_COMPACT_SESSION_NOTES_TOKEN_BUDGET;
   const currentTokens = estimateTextTokens(notesContent);
   if (currentTokens > tokenLimit) {
@@ -341,6 +260,12 @@ export function createPostCompactFileAttachments(
   ];
 }
 
+/**
+ * 将压缩结果的各部分按顺序组装为最终的消息列表。
+ * 顺序：边界标记 → 摘要消息 → 附件 → 最近消息
+ * @param result - 压缩结果
+ * @returns 组装后的消息列表
+ */
 export function buildPostCompactMessages(result: CompactionResult): CompactMessage[] {
   return [
     result.boundaryMarker,
@@ -350,7 +275,14 @@ export function buildPostCompactMessages(result: CompactionResult): CompactMessa
   ];
 }
 
-/** 通过 SubAgent 执行上下文压缩。将未压缩的对话内容发送给 AI，由 AI 生成精简摘要。 */
+/**
+ * 通过 SubAgent 执行上下文压缩。
+ * 将未压缩的对话内容发送给 AI，由 AI 生成精简摘要。
+ * @param messages - 完整消息列表
+ * @param userId - 用户 ID
+ * @param customInstructions - 自定义压缩指令（可选）
+ * @returns 压缩摘要文本和子代理执行追踪
+ */
 async function executeCompactViaSubAgent(
   messages: CompactMessage[],
   userId: string,
@@ -361,6 +293,7 @@ async function executeCompactViaSubAgent(
   const persistentMemory = loadPersistentMemory();
   const { compactMessages, uncompactMessages } = splitMessagesByCompactBoundary(messages);
 
+  // 提取已有的压缩上下文（如有）
   let compactContext = '';
   if (compactMessages.length > 0) {
     const summaryMsg = compactMessages.find((m) => m.is_compact_summary);
@@ -411,11 +344,21 @@ async function executeCompactViaSubAgent(
   return { summary: summaryText, trace: result.trace };
 }
 
+/**
+ * 执行完整的上下文压缩流程。
+ * @param messages - 完整消息列表
+ * @param conversationId - 会话 ID
+ * @param userId - 用户 ID
+ * @param _model - 模型名称（当前未使用，SubAgent 内部使用用户配置的模型）
+ * @param isAutoCompact - 是否为自动压缩
+ * @param customInstructions - 自定义压缩指令（可选）
+ * @returns 压缩结果
+ */
 export async function compactConversation(
   messages: CompactMessage[],
   conversationId: string,
   userId: string,
-  _model: string = 'deepseek-v4-pro',
+  _model: string = FALLBACK_MODEL,
   isAutoCompact: boolean = false,
   customInstructions?: string | null,
 ): Promise<CompactionResult> {
@@ -433,6 +376,9 @@ export async function compactConversation(
     customInstructions,
   );
 
+  // 使用用户选择的模型，兜底使用传入的 _model
+  const model = getParamValue(userId, 'selected_model', _model);
+
   const result = buildPostCompactResult(
     summaryText,
     recentMessages,
@@ -440,9 +386,9 @@ export async function compactConversation(
     isAutoCompact,
     userId,
     messages.length,
+    model,
   );
-  // 将子代理执行轨迹附加到结果上
-  (result as unknown as Record<string, unknown>).subAgentTrace = compactTrace;
+  result.subAgentTrace = compactTrace;
 
   const attachments = createPostCompactFileAttachments(conversationId);
   result.attachments = attachments;
@@ -454,6 +400,7 @@ export async function compactConversation(
   return result;
 }
 
+/** 值错误，用于输入参数校验失败 */
 export class ValueError extends Error {
   constructor(message: string) {
     super(message);
@@ -461,6 +408,10 @@ export class ValueError extends Error {
   }
 }
 
+/**
+ * 压缩后的清理工作：重置会话笔记的 Token 计数状态。
+ * @param conversationId - 会话 ID
+ */
 export async function runPostCompactCleanup(conversationId: string): Promise<void> {
   logger.info('Post-compact cleanup started for conversation %s', conversationId);
 
@@ -478,6 +429,14 @@ export async function runPostCompactCleanup(conversationId: string): Promise<voi
   logger.info('Post-compact cleanup completed for conversation %s', conversationId);
 }
 
+/**
+ * 自动压缩入口。检查是否需要压缩，若需要则执行并替换数据库中的消息。
+ * @security 删除消息时通过 user_id 过滤确保数据隔离。
+ * @param conversationId - 会话 ID
+ * @param model - 模型名称
+ * @param userId - 用户 ID
+ * @returns 自动压缩结果，无需压缩时返回 null
+ */
 export async function autoCompactIfNeeded(
   conversationId: string,
   model: string,
@@ -494,6 +453,7 @@ export async function autoCompactIfNeeded(
     return null;
   }
 
+  // 优先尝试微型压缩
   const microResult = maybeTimeBasedMicroCompact(messages);
   if (microResult !== null) {
     return {
@@ -517,9 +477,13 @@ export async function autoCompactIfNeeded(
 
     const postCompactMessages = buildPostCompactMessages(result);
 
+    // 事务性替换：删除旧消息 → 插入压缩后的消息
     const db = getDb();
     const replaceMessages = db.transaction(() => {
-      db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId);
+      // @security 通过 user_id 过滤确保只能删除自己的消息
+      db.prepare(
+        'DELETE FROM messages WHERE conversation_id = ? AND conversation_id IN (SELECT id FROM conversations WHERE user_id = ?)',
+      ).run(conversationId, userId);
       const insertStmt = db.prepare(
         'INSERT INTO messages (conversation_id, role, content, reasoning_content, is_compact_summary, compact_metadata) VALUES (?, ?, ?, ?, ?, ?)',
       );

@@ -1,7 +1,17 @@
-// 上下文压缩 API：手动触发压缩、查询压缩状态和令牌使用情况
+/**
+ * 上下文压缩路由模块
+ *
+ * 职责：提供手动触发上下文压缩和查询压缩状态（令牌使用情况）的端点。
+ * 当对话消息过多导致 token 接近模型上限时，通过压缩将历史消息摘要化，
+ * 保留近期对话，释放 token 空间。
+ *
+ * 端点概览：
+ *   POST /compact          — 手动触发会话上下文压缩
+ *   GET  /compact/status   — 查询会话的令牌使用量和警告状态
+ */
 import type { FastifyInstance } from 'fastify';
 import { getCurrentUser } from '../../core/middleware/index.js';
-import { getDb } from '../../core/database/index.js';
+import { getDb } from '../../core/database/connection.js';
 import { generateId } from '../../core/utils/id.js';
 import { eventManager } from '../../core/events/manager.js';
 import {
@@ -17,6 +27,19 @@ import { listByConversation } from '../../domain/message/repository.js';
 import { compactSchema, errorResponse } from '../../core/validation/schemas.js';
 
 export async function compactRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * POST /compact
+   * 手动触发会话上下文压缩。
+   *
+   * 请求体：
+   *   - conversation_id: string — 目标会话 ID（必填）
+   *   - model: string — 用于压缩的模型，默认 deepseek-v4-pro（可选）
+   *   - custom_instructions: string — 自定义压缩指令（可选）
+   *
+   * 响应：{ success: boolean, pre_compact_tokens: number, post_compact_tokens: number, will_retrigger: boolean }
+   *
+   * @security 验证会话所有权：通过 user_id 比对确保用户只能压缩自己的会话
+   */
   app.post('/compact', async (request, reply) => {
     const parsed = compactSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -27,6 +50,7 @@ export async function compactRoutes(app: FastifyInstance): Promise<void> {
     const body = parsed.data;
     const user = getCurrentUser(request);
 
+    // @security 会话所有权校验：防止用户压缩他人会话
     const db = getDb();
     const row = db
       .prepare('SELECT user_id FROM conversations WHERE id = ?')
@@ -54,69 +78,76 @@ export async function compactRoutes(app: FastifyInstance): Promise<void> {
         body.custom_instructions,
       );
 
-      // Step 1: Mark all existing messages as compacted
-      db.prepare('UPDATE messages SET is_compact_summary = 1 WHERE conversation_id = ?').run(
-        body.conversation_id,
-      );
+      // 在事务中执行压缩相关的数据库写操作，保证原子性
+      const transaction = db.transaction(() => {
+        // Step 1: 将所有现有消息标记为已压缩
+        db.prepare('UPDATE messages SET is_compact_summary = 1 WHERE conversation_id = ?').run(
+          body.conversation_id,
+        );
 
-      // Step 2: Keep recent messages marked as not compacted
-      const recentContentCounts = new Map<string, number>();
-      for (const m of result.recentMessages) {
-        const key = `${m.role}|${m.content}`;
-        recentContentCounts.set(key, (recentContentCounts.get(key) ?? 0) + 1);
-      }
-      const allMessages = db
-        .prepare(
-          'SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC',
-        )
-        .all(body.conversation_id) as Array<{ id: string; role: string; content: string }>;
+        // Step 2: 将近期消息恢复为未压缩状态
+        // 使用内容计数器匹配，因为同一内容可能出现多次，需精确还原数量
+        const recentContentCounts = new Map<string, number>();
+        for (const m of result.recentMessages) {
+          const key = `${m.role}|${m.content}`;
+          recentContentCounts.set(key, (recentContentCounts.get(key) ?? 0) + 1);
+        }
+        const allMessages = db
+          .prepare(
+            'SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC',
+          )
+          .all(body.conversation_id) as Array<{ id: string; role: string; content: string }>;
 
-      for (const msg of allMessages) {
-        if (recentContentCounts.size === 0) break;
-        const key = `${msg.role}|${msg.content}`;
-        const count = recentContentCounts.get(key);
-        if (count !== undefined) {
-          db.prepare('UPDATE messages SET is_compact_summary = 0 WHERE id = ?').run(msg.id);
-          if (count > 1) {
-            recentContentCounts.set(key, count - 1);
-          } else {
-            recentContentCounts.delete(key);
+        for (const msg of allMessages) {
+          if (recentContentCounts.size === 0) break;
+          const key = `${msg.role}|${msg.content}`;
+          const count = recentContentCounts.get(key);
+          if (count !== undefined) {
+            db.prepare('UPDATE messages SET is_compact_summary = 0 WHERE id = ?').run(msg.id);
+            if (count > 1) {
+              recentContentCounts.set(key, count - 1);
+            } else {
+              recentContentCounts.delete(key);
+            }
           }
         }
-      }
 
-      // Step 3: Insert compaction boundary and summary
-      const boundaryId = generateId('messages');
-      db.prepare(
-        'INSERT INTO messages (id, conversation_id, role, content, reasoning_content, is_compact_summary, compact_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      ).run(
-        boundaryId,
-        body.conversation_id,
-        result.boundaryMarker.role,
-        result.boundaryMarker.content,
-        '',
-        0,
-        result.boundaryMarker.compact_metadata ?? null,
-      );
-      for (const msg of result.summaryMessages) {
-        const summaryId = generateId('messages');
+        // Step 3: 插入压缩边界标记和摘要消息
+        const boundaryId = generateId('messages');
         db.prepare(
           'INSERT INTO messages (id, conversation_id, role, content, reasoning_content, is_compact_summary, compact_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)',
         ).run(
-          summaryId,
+          boundaryId,
           body.conversation_id,
-          msg.role,
-          msg.content,
-          msg.reasoning_content ?? '',
-          1,
-          null,
+          result.boundaryMarker.role,
+          result.boundaryMarker.content,
+          '',
+          0,
+          result.boundaryMarker.compact_metadata ?? null,
         );
-      }
+        for (const msg of result.summaryMessages) {
+          const summaryId = generateId('messages');
+          db.prepare(
+            'INSERT INTO messages (id, conversation_id, role, content, reasoning_content, is_compact_summary, compact_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          ).run(
+            summaryId,
+            body.conversation_id,
+            msg.role,
+            msg.content,
+            msg.reasoning_content ?? '',
+            1,
+            null,
+          );
+        }
+      });
+
+      transaction();
 
       await runPostCompactCleanup(body.conversation_id);
 
       eventManager.broadcast('messages_compacted', { conversation_id: body.conversation_id });
 
+      // 提取子代理追踪信息，用于生成压缩活动摘要
       const resultExtra = result as unknown as Record<string, unknown>;
       const compactTrace = resultExtra['subAgentTrace'];
       let modelOutput = '';
@@ -150,10 +181,22 @@ export async function compactRoutes(app: FastifyInstance): Promise<void> {
         will_retrigger: result.willRetriggerNextTurn,
       };
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
+      return reply.status(500).send({ success: false, error: e instanceof Error ? e.message : String(e) });
     }
   });
 
+  /**
+   * GET /compact/status
+   * 查询指定会话的令牌使用情况和警告状态，供前端展示压缩提示。
+   *
+   * 查询参数：
+   *   - conversation_id: string — 目标会话 ID（必填）
+   *   - model: string — 模型名称，默认 deepseek-v4-pro（可选）
+   *
+   * 响应：{ token_usage: number, warning_state: string, message_count: number }
+   *
+   * @security 验证会话所有权，防止越权查询
+   */
   app.get('/compact/status', async (request, reply) => {
     const query = request.query as { conversation_id?: string; model?: string };
     const user = getCurrentUser(request);
@@ -165,6 +208,7 @@ export async function compactRoutes(app: FastifyInstance): Promise<void> {
     const conversationId = query.conversation_id;
 
     try {
+      // @security 会话所有权校验
       const db = getDb();
       const row = db
         .prepare('SELECT user_id FROM conversations WHERE id = ?')
@@ -190,7 +234,7 @@ export async function compactRoutes(app: FastifyInstance): Promise<void> {
         message_count: messages.length,
       };
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) };
+      return reply.status(500).send({ success: false, error: e instanceof Error ? e.message : String(e) });
     }
   });
 }

@@ -1,19 +1,31 @@
 /**
  * AI API 错误分类与映射。
- * 将 OpenAI SDK 抛出的错误按 HTTP 状态码映射为用户可读的中文提示。
+ *
+ * 将 OpenAI SDK 抛出的错误按 HTTP 状态码映射为用户可读的中文提示，
+ * 避免将上游原始错误信息直接暴露给前端。
+ *
+ * @module core/ai/errors
  */
 import type { OpenAIError } from 'openai';
 
+/** 映射后的 API 错误结构，包含 HTTP 状态码与用户可读的中文消息 */
 export interface MappedApiError {
   statusCode: number;
   message: string;
 }
 
+/**
+ * 将未知错误映射为结构化的 API 错误。
+ * 仅识别 OpenAI SDK 的错误对象（含 status 字段），其余统一返回 500。
+ *
+ * @param error - 任意类型的错误对象
+ * @returns 包含状态码和中文提示的 MappedApiError
+ */
 export function mapApiError(error: unknown): MappedApiError {
   if (error && typeof error === 'object' && 'status' in error) {
     const openaiError = error as OpenAIError & { status?: number };
     const status = openaiError.status || 500;
-    const message = openaiError.message || 'AI API 调用失败';
+    const _message = openaiError.message || 'AI API 调用失败';
 
     switch (status) {
       case 400:
@@ -35,7 +47,8 @@ export function mapApiError(error: unknown): MappedApiError {
       case 503:
         return { statusCode: 503, message: 'AI 服务暂时不可用' };
       default:
-        return { statusCode: status, message: `AI API 调用失败: ${message}` };
+        // 不暴露上游原始错误消息，防止泄露 API 端点、请求 ID 等内部信息
+        return { statusCode: status, message: 'AI API 调用失败，请稍后重试' };
     }
   }
 

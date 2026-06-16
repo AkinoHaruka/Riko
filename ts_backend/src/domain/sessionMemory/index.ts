@@ -1,4 +1,8 @@
-﻿export { SessionMemoryManager } from './manager.js';
+﻿/**
+ * 会话记忆模块入口。导出会话笔记管理器、服务、提示构建器、工具定义、触发策略和类型。
+ * 会话记忆通过 SubAgent 驱动 AI 自动提取对话要点，维护每个对话的笔记文件。
+ */
+export { SessionMemoryManager } from './manager.js';
 export { SessionMemoryService, injectSessionMemoryUpdate } from './service.js';
 export type { SessionNotesResponse, ExtractResponse, DeleteResponse } from './service.js';
 export {

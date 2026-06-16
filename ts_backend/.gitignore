@@ -4,11 +4,15 @@ logs/
 .env
 *.db
 *.log
+coverage/
+.nyc_output/
 
 # Runtime data (prompts are tracked as source)
 data/app.db*
 data/memories/
+data/emotions/
 data/system_prompts*/
 data/test_memories_e2e/
 data/db_init.txt
 db_init.txt
+data/mcp_servers.json

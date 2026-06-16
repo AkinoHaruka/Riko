@@ -1,9 +1,12 @@
 /**
- * Token 估算工具。基于字符类型（CJK 与非 CJK）粗略估算文本 Token 数。
+ * Token 估算工具。
+ * 基于字符类型（CJK 与非 CJK）粗略估算文本 Token 数。
  * 这是经验公式，非确切计数，仅供触发判断和预算分配使用，不可替代模型实际的 Token 化结果。
  */
 import type { CompactMessage, TokenWarningState } from './types.js';
+import { getModelContextWindow } from '../../core/ai/providers/index.js';
 
+/** CJK 字符 Unicode 范围表，用于区分中日韩文字和拉丁文字 */
 const _CJK_RANGES: [number, number][] = [
   [0x4e00, 0x9fff],
   [0x3400, 0x4dbf],
@@ -12,6 +15,12 @@ const _CJK_RANGES: [number, number][] = [
   [0xff00, 0xffef],
 ];
 
+/**
+ * 估算文本的 Token 数。
+ * DeepSeek 官方标准：1 英文字符 ≈ 0.3 token，1 中文字符 ≈ 0.6 token。
+ * @param text - 待估算的文本
+ * @returns 估算的 Token 数
+ */
 export function estimateTextTokens(text: string): number {
   let cjkCount = 0;
   let otherCount = 0;
@@ -24,30 +33,37 @@ export function estimateTextTokens(text: string): number {
       otherCount += 1;
     }
   }
-  // DeepSeek 官方标准：1 英文字符 ≈ 0.3 token，1 中文字符 ≈ 0.6 token
   return Math.floor(cjkCount * 0.6 + otherCount * 0.3);
 }
 
+/**
+ * 估算单条消息的 Token 数，包含 role、content、reasoning_content 及格式开销。
+ * @param message - 待估算的消息
+ * @returns 估算的 Token 数
+ */
 export function estimateMessageTokens(message: CompactMessage): number {
   const role = message.role ?? '';
   const content = message.content ?? '';
   const reasoning = message.reasoning_content ?? '';
   const parts = [role, content, reasoning];
   const total = parts.reduce((sum, p) => sum + estimateTextTokens(p), 0);
+  // +4 为消息格式开销（role 标签、分隔符等）
   return total + 4;
 }
 
-// 消息间有 role 分隔符、格式开销，合计约 4/3 倍的单条消息 Token 数
+/**
+ * 估算消息列表的总 Token 数。
+ * 消息间有 role 分隔符、格式开销，合计约 4/3 倍的单条消息 Token 数。
+ * @param messages - 消息列表
+ * @returns 估算的总 Token 数
+ */
 export function estimateMessagesTokens(messages: CompactMessage[]): number {
   const total = messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
   return Math.ceil((total * 4) / 3);
 }
 
-export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  'deepseek-v4-flash': 1_000_000,
-  'deepseek-v4-pro': 1_000_000,
-  default: 1_000_000,
-};
+/** 上下文窗口的兜底默认值，当 providers 注册表中找不到模型时使用 */
+const DEFAULT_CONTEXT_WINDOW = 1_000_000;
 
 // 压缩摘要最大输出 Token 数（AI 单次生成的摘要内容上限）
 export const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20000;
@@ -58,8 +74,14 @@ export const WARNING_THRESHOLD_BUFFER_TOKENS = 20000;
 // 红线阈值：逼近此值后阻止发送新消息，防止上下文溢出
 export const BLOCKING_LIMIT_BUFFER_TOKENS = 3000;
 
+/**
+ * 获取模型的有效上下文窗口大小。
+ * 从模型上下文窗口中扣除摘要输出预留，并支持环境变量覆盖（用于调试）。
+ * @param model - 模型名称
+ * @returns 有效上下文窗口 Token 数
+ */
 export function getEffectiveContextWindow(model: string): number {
-  const window = MODEL_CONTEXT_WINDOWS[model] ?? 1_000_000;
+  const window = getModelContextWindow(model, DEFAULT_CONTEXT_WINDOW);
   let effective = window - MAX_OUTPUT_TOKENS_FOR_SUMMARY;
   const envOverride = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   if (envOverride !== undefined) {
@@ -75,10 +97,21 @@ export function getEffectiveContextWindow(model: string): number {
   return effective;
 }
 
+/**
+ * 获取自动压缩触发阈值。等于有效上下文窗口减去缓冲 Token。
+ * @param model - 模型名称
+ * @returns 自动压缩触发阈值
+ */
 export function getAutoCompactThreshold(model: string): number {
   return getEffectiveContextWindow(model) - AUTOCOMPACT_BUFFER_TOKENS;
 }
 
+/**
+ * 按压缩边界将消息列表分为已压缩和未压缩两部分。
+ * 从后向前查找最后一个 compact_boundary 标记，其之前为已压缩部分，之后为未压缩部分。
+ * @param messages - 完整消息列表
+ * @returns compactMessages: 已压缩部分（含边界和摘要），uncompactMessages: 未压缩部分
+ */
 export function splitMessagesByCompactBoundary(messages: CompactMessage[]): {
   compactMessages: CompactMessage[];
   uncompactMessages: CompactMessage[];
@@ -117,6 +150,12 @@ export function splitMessagesByCompactBoundary(messages: CompactMessage[]): {
   };
 }
 
+/**
+ * 计算 Token 用量警告状态，用于前端展示不同级别的上下文剩余提示。
+ * @param tokenUsage - 当前 Token 用量
+ * @param model - 模型名称
+ * @returns 包含各级别阈值的警告状态
+ */
 export function calculateTokenWarningState(tokenUsage: number, model: string): TokenWarningState {
   const threshold = getAutoCompactThreshold(model);
   const effectiveWindow = getEffectiveContextWindow(model);

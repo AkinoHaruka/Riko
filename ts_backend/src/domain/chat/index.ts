@@ -1,4 +1,9 @@
-﻿export type {
+﻿/**
+ * 聊天领域模块入口。
+ * 统一导出聊天相关的类型定义、SSE 事件常量、工具调用处理器、
+ * 流式响应处理和聊天服务函数。
+ */
+export type {
   ChatMessage,
   ChatCompletionRequest,
   SseEvent,
@@ -23,6 +28,8 @@ export {
 
 export { executeToolCalls, buildToolResultMessages } from './toolHandler.js';
 
-export { formatSseEvent, streamResponse } from './stream.js';
+export { formatSseEvent, streamingToolCallLoop, nonStreamingToolCallLoop } from './toolCallLoop.js';
+
+export { streamResponse } from './stream.js';
 
 export { chatCompletionStream, chatCompletionNonStream, listModels } from './service.js';

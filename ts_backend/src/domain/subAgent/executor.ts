@@ -1,13 +1,21 @@
 /**
  * 子代理执行器：多轮对话循环，支持工具调用、自动重试、执行轨迹收集。
  * 提供给 session_memory、compact、dream 三个子代理使用。
+ *
+ * 核心流程：
+ * 1. 构建 OpenAI 请求参数（模型、消息、工具定义）
+ * 2. 循环调用 AI API，每轮处理响应和工具调用
+ * 3. 工具调用通过 toolRegistry 或 customToolExecutor 执行
+ * 4. 连续未调用工具时追加提示重试，超过阈值后终止
+ * 5. 收集执行轨迹（请求 JSON、每轮详情、耗时等）
  */
 import type OpenAI from 'openai';
 import { getOrCreateClient } from '../../core/ai/client.js';
 import { createLogger } from '../../core/logger/index.js';
 import { toolRegistry } from '../../tools/registry.js';
-import type { ToolContext } from '../../tools/types.js';
+import type { ToolContext } from '../../core/types/tools.js';
 import { buildSubAgentMessages } from './promptBuilder.js';
+import { getParamValue } from '../setting/index.js';
 import type {
   SubAgentConfig,
   SubAgentPromptParts,
@@ -19,9 +27,27 @@ import type {
 
 const logger = createLogger('SubAgentExecutor');
 const DEFAULT_MAX_TURNS = 10;
-const DEFAULT_MODEL = 'deepseek-v4-pro';
+/** 默认模型标识，getParamValue 未找到用户设置时使用 */
+const FALLBACK_MODEL = 'deepseek-v4-pro';
 const DEFAULT_TEMPERATURE = 0.3;
 
+/**
+ * 获取用户选择的模型，优先从设置读取，兜底使用 FALLBACK_MODEL。
+ * @param userId - 用户 ID
+ * @returns 模型标识字符串
+ */
+function resolveModel(userId: string): string {
+  return getParamValue(userId, 'selected_model', FALLBACK_MODEL);
+}
+
+/**
+ * 执行子代理的多轮对话循环。
+ * @param config 子代理配置（模型、工具、轮次限制等）
+ * @param promptParts 提示词各部分
+ * @param userId 用户 ID，用于获取 API 客户端
+ * @param toolContext 工具执行上下文（会话 ID、记忆根目录等）
+ * @returns 子代理执行结果（成功/失败、输出文本、执行轨迹）
+ */
 export class SubAgentExecutor {
   async execute(
     config: SubAgentConfig,
@@ -31,12 +57,15 @@ export class SubAgentExecutor {
   ): Promise<SubAgentResult> {
     const startTime = Date.now();
     const maxTurns = config.maxTurns ?? DEFAULT_MAX_TURNS;
-    const model = config.model ?? DEFAULT_MODEL;
+    const model = config.model ?? resolveModel(userId);
     const temperature = config.temperature ?? DEFAULT_TEMPERATURE;
 
     // 收集执行轨迹
     const turns: SubAgentTurnDetail[] = [];
     let requestJson = '';
+    // 声明在 try 外部，确保 catch 块可访问已累计的值
+    let totalTurns = 0;
+    let toolCallCount = 0;
 
     try {
       logger.info(
@@ -56,25 +85,26 @@ export class SubAgentExecutor {
       const messages = buildSubAgentMessages(promptParts) as OpenAI.ChatCompletionMessageParam[];
 
       // 保存请求 JSON 供前端监控展示（完整内容，不截断）
-      requestJson = JSON.stringify(
-        {
-          type: config.type,
-          model,
-          temperature,
-          maxTurns,
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-          })),
-          tools: config.tools?.map((t) =>
-            typeof t === 'object' && t && 'function' in t
-              ? (t as Record<string, unknown>).function
-              : t,
-          ),
-        },
-        null,
-        2,
-      );
+      const requestObj: Record<string, unknown> = {
+        type: config.type,
+        model,
+        temperature,
+        maxTurns,
+        messages: messages.map((m) => ({
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+        })),
+        tools: config.tools?.map((t) =>
+          typeof t === 'object' && t && 'function' in t
+            ? (t as Record<string, unknown>).function
+            : t,
+        ),
+      };
+      // 移除可能包含的敏感头信息，防止 API Key 泄露
+      if (requestObj.headers && typeof requestObj.headers === 'object') {
+        delete (requestObj.headers as Record<string, unknown>).Authorization;
+      }
+      requestJson = JSON.stringify(requestObj, null, 2);
 
       logger.info(`[SubAgent:${config.type}] 消息构建完成, 消息数=${messages.length}`);
 
@@ -95,9 +125,10 @@ export class SubAgentExecutor {
       }
 
       let accumulatedText = '';
-      let totalTurns = 0;
-      let toolCallCount = 0;
       const hadTools = !!(config.tools && config.tools.length > 0);
+      // 连续未调用工具计数器，超过阈值后终止循环避免浪费轮次
+      let consecutiveNoToolCalls = 0;
+      const MAX_CONSECUTIVE_NO_TOOL_CALLS = 2;
 
       for (let turn = 0; turn < maxTurns; turn++) {
         totalTurns = turn + 1;
@@ -117,13 +148,13 @@ export class SubAgentExecutor {
           logger.error(
             `[SubAgent:${config.type}] 第 ${totalTurns} 轮API调用失败: status=${errStatus}, message=${errMsg}`,
           );
-          throw new Error(`DeepSeek API 调用失败 (status=${errStatus}): ${errMsg}`);
+          throw new Error(`AI API 调用失败 (status=${errStatus}): ${errMsg}`);
         }
 
         const choice = response.choices[0];
         if (!choice) {
           logger.error(`[SubAgent:${config.type}] 第 ${totalTurns} 轮返回空choices`);
-          throw new Error('DeepSeek API 返回空响应');
+          throw new Error('AI API 返回空响应');
         }
 
         const message = choice.message;
@@ -134,8 +165,9 @@ export class SubAgentExecutor {
         }
 
         if (!message.tool_calls || message.tool_calls.length === 0) {
-          if (hadTools && toolCallCount === 0 && turn < maxTurns - 1) {
-            logger.warn(`[SubAgent:${config.type}] 第 ${totalTurns} 轮LLM未调用工具，追加提示重试`);
+          consecutiveNoToolCalls++;
+          if (hadTools && toolCallCount === 0 && consecutiveNoToolCalls <= MAX_CONSECUTIVE_NO_TOOL_CALLS && turn < maxTurns - 1) {
+            logger.warn(`[SubAgent:${config.type}] 第 ${totalTurns} 轮LLM未调用工具，追加提示重试 (${consecutiveNoToolCalls}/${MAX_CONSECUTIVE_NO_TOOL_CALLS})`);
             const rc = (message as unknown as Record<string, unknown>).reasoning_content as
               | string
               | undefined;
@@ -160,6 +192,9 @@ export class SubAgentExecutor {
             });
             continue;
           }
+          if (consecutiveNoToolCalls > MAX_CONSECUTIVE_NO_TOOL_CALLS) {
+            logger.warn(`[SubAgent:${config.type}] 连续 ${consecutiveNoToolCalls} 轮未调用工具，终止循环`);
+          }
           turns.push({
             turn: totalTurns,
             modelResponse: turnResponseText.slice(0, 500),
@@ -183,6 +218,7 @@ export class SubAgentExecutor {
         }
 
         toolCallCount += functionToolCalls.length;
+        consecutiveNoToolCalls = 0; // 有工具调用时重置连续未调用计数器
         logger.info(
           `[SubAgent:${config.type}] 第 ${totalTurns} 轮工具调用数: ${functionToolCalls.length}, 工具: ${functionToolCalls.map((tc) => tc.function.name).join(', ')}`,
         );
@@ -289,8 +325,8 @@ export class SubAgentExecutor {
       const trace: SubAgentTrace = {
         requestJson,
         turns,
-        totalTurns: 0,
-        toolCallCount: 0,
+        totalTurns: turns.length,
+        toolCallCount,
         elapsedMs,
       };
 
@@ -300,12 +336,16 @@ export class SubAgentExecutor {
         output: '',
         error: errorMessage,
         trace,
-        metadata: { model, totalTurns: 0, elapsedMs },
+        metadata: { model, totalTurns: turns.length, toolCallCount, elapsedMs },
         timestamp: new Date().toISOString(),
       };
     }
   }
 
+  /**
+   * 执行单个工具调用。优先使用 customToolExecutor，否则从 toolRegistry 查找。
+   * 执行前先调用 validate 校验参数合法性，执行失败时返回错误 JSON 而非抛异常。
+   */
   private executeToolCall(
     toolCall: Extract<OpenAI.ChatCompletionMessageToolCall, { type: 'function' }>,
     toolContext?: ToolContext,
@@ -316,7 +356,7 @@ export class SubAgentExecutor {
     try {
       args = JSON.parse(toolCall.function.arguments);
     } catch {
-      args = {};
+      args = { _parseError: `工具参数 JSON 解析失败，原始参数: ${toolCall.function.arguments.slice(0, 200)}` };
     }
 
     // 自定义执行器优先（子代理可提供自己的工具实现）

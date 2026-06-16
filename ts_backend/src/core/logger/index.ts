@@ -1,2 +1,7 @@
-/** 基于 pino 的结构化日志，支持模块级子日志和敏感字段自动脱敏 */
+/**
+ * 日志模块入口。
+ * 导出 pino 根日志实例和模块级子日志工厂函数。
+ *
+ * @module core/logger
+ */
 export { logger, createLogger } from './logger.js';
