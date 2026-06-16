@@ -8,7 +8,6 @@
         android:label="Riko"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config">
         <!-- 空 taskAffinity 表示独立的 Flutter activity 任务栈，避免和启动器任务混合 -->
         <activity

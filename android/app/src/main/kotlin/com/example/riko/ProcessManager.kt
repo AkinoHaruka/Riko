@@ -1,7 +1,5 @@
 package com.example.riko
 
-import android.os.Build
-import android.os.Environment
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -20,6 +18,8 @@ class ProcessManager(
     private val homeDir get() = "$filesDir/home"
     private val configDir get() = "$filesDir/config"
     private val libDir get() = "$filesDir/lib"
+
+    private val storagePermissionManager = StoragePermissionManager(rootfsDir)
 
     companion object {
         const val FAKE_KERNEL_RELEASE = "6.17.0-PRoot-Distro"
@@ -56,70 +56,26 @@ class ProcessManager(
         } catch (_: Exception) {}
     }
 
-    private fun commonProotFlags(): List<String> {
-        // 确保 data 目录存在，供 /root/data bind mount 使用
+    private fun createProotConfig(): ProotConfig {
         File("$filesDir/data").mkdirs()
         ensureResolvConf()
-        val prootPath = getProotPath()
-        val procFakes = "$configDir/proc_fakes"
-        val sysFakes = "$configDir/sys_fakes"
 
-        return listOf(
-            prootPath,
-            "--link2symlink", "-L",
-            "--kill-on-exit",
-            "--rootfs=$rootfsDir",
-            "--cwd=/root",
-            "--bind=/dev",
-            "--bind=/dev/urandom:/dev/random",
-            "--bind=/proc",
-            "--bind=/proc/self/fd:/dev/fd",
-            "--bind=/proc/self/fd/0:/dev/stdin",
-            "--bind=/proc/self/fd/1:/dev/stdout",
-            "--bind=/proc/self/fd/2:/dev/stderr",
-            "--bind=/sys",
-            "--bind=$procFakes/loadavg:/proc/loadavg",
-            "--bind=$procFakes/stat:/proc/stat",
-            "--bind=$procFakes/uptime:/proc/uptime",
-            "--bind=$procFakes/version:/proc/version",
-            "--bind=$procFakes/vmstat:/proc/vmstat",
-            "--bind=$procFakes/cap_last_cap:/proc/sys/kernel/cap_last_cap",
-            "--bind=$procFakes/max_user_watches:/proc/sys/fs/inotify/max_user_watches",
-            "--bind=$procFakes/fips_enabled:/proc/sys/crypto/fips_enabled",
-            "--bind=$rootfsDir/tmp:/dev/shm",
-            "--bind=$sysFakes/empty:/sys/fs/selinux",
-            "--bind=$configDir/resolv.conf:/etc/resolv.conf",
-            "--bind=$homeDir:/root/home",
-            "--bind=$filesDir/data:/root/data",
-        ).let { flags ->
-            // Bind-mount shared storage if accessible
-            val hasAccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Environment.isExternalStorageManager()
-            } else {
-                val sdcard = Environment.getExternalStorageDirectory()
-                sdcard.exists() && sdcard.canRead()
-            }
-            if (hasAccess) {
-                val storageDir = File("$rootfsDir/storage")
-                storageDir.mkdirs()
-                val sdcardLink = File("$rootfsDir/sdcard")
-                if (!sdcardLink.exists()) {
-                    try {
-                        Runtime.getRuntime().exec(
-                            arrayOf("ln", "-sf", "/storage/emulated/0", "$rootfsDir/sdcard")
-                        ).waitFor()
-                    } catch (_: Exception) {
-                        sdcardLink.mkdirs()
-                    }
-                }
-                flags + listOf(
-                    "--bind=/storage:/storage",
-                    "--bind=/storage/emulated/0:/sdcard"
-                )
-            } else {
-                flags
-            }
+        val hasStorageAccess = storagePermissionManager.hasStorageAccess()
+        if (hasStorageAccess) {
+            storagePermissionManager.setupStorageLinks()
         }
+
+        return ProotConfig.createDefault(
+            filesDir = filesDir,
+            configDir = configDir,
+            homeDir = homeDir,
+            enableStorage = hasStorageAccess,
+        )
+    }
+
+    private fun commonProotFlags(): List<String> {
+        val config = createProotConfig()
+        return listOf(getProotPath()) + config.toCommandLineArgs()
     }
 
     // ---- INSTALL MODE ----

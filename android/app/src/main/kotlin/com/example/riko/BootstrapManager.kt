@@ -3,14 +3,11 @@ package com.example.riko
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.LinkProperties
-import android.os.Build
 import android.system.Os
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.InputStream
-import java.util.zip.GZIPInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
@@ -82,151 +79,21 @@ class BootstrapManager(
         )
     }
 
-    // ---- Rootfs extraction (pure Java) ----
+    private val extractionOrchestrator by lazy {
+        RootfsExtractionOrchestrator(
+            TarExtractor(),
+            SymlinkHandler(),
+            PermissionFixer(),
+            ExtractionValidator(),
+            filesDir
+        )
+    }
+
+    // ---- Rootfs extraction (delegated to RootfsExtractionOrchestrator) ----
 
     fun extractRootfs(tarPath: String) {
-        val rootfs = File(rootfsDir)
-        if (rootfs.exists()) deleteRecursively(rootfs)
-        rootfs.mkdirs()
-
-        val deferredSymlinks = mutableListOf<Pair<String, String>>() // target, path
-        var entryCount = 0
-        var fileCount = 0
-        var symlinkCount = 0
-        var extractionError: Exception? = null
-
-        // Determine if this is gzip-compressed or plain tar
-        val isGzip = tarPath.endsWith(".gz")
-
-        try {
-            FileInputStream(tarPath).use { fis ->
-                BufferedInputStream(fis, 256 * 1024).use { bis ->
-                    val rawStream: InputStream = if (isGzip) GZIPInputStream(bis) else bis
-                    TarArchiveInputStream(rawStream).use { tis ->
-                        var entry: TarArchiveEntry? = tis.nextEntry
-                        while (entry != null) {
-                            entryCount++
-                            val name = entry.name
-                                .removePrefix("./")
-                                .removePrefix("/")
-
-                            if (name.isEmpty() || name.startsWith("dev/") || name == "dev") {
-                                entry = tis.nextEntry
-                                continue
-                            }
-
-                            val outFile = File(rootfsDir, name)
-
-                            when {
-                                entry.isDirectory -> outFile.mkdirs()
-                                entry.isSymbolicLink -> {
-                                    deferredSymlinks.add(
-                                        Pair(entry.linkName, outFile.absolutePath)
-                                    )
-                                    symlinkCount++
-                                }
-                                entry.isLink -> {
-                                    val target = entry.linkName
-                                        .removePrefix("./").removePrefix("/")
-                                    val targetFile = File(rootfsDir, target)
-                                    outFile.parentFile?.mkdirs()
-                                    try {
-                                        if (targetFile.exists()) {
-                                            targetFile.copyTo(outFile, overwrite = true)
-                                            if (targetFile.canExecute())
-                                                outFile.setExecutable(true, false)
-                                            fileCount++
-                                        }
-                                    } catch (_: Exception) {}
-                                }
-                                else -> {
-                                    outFile.parentFile?.mkdirs()
-                                    FileOutputStream(outFile).use { fos ->
-                                        val buf = ByteArray(65536)
-                                        var len: Int
-                                        while (tis.read(buf).also { len = it } != -1) {
-                                            fos.write(buf, 0, len)
-                                        }
-                                    }
-                                    outFile.setReadable(true, false)
-                                    outFile.setWritable(true, false)
-                                    val mode = entry.mode
-                                    if (mode == 0 || mode and 0b001_001_001 != 0) {
-                                        val path = name.lowercase()
-                                        if (mode and 0b001_001_001 != 0 ||
-                                            path.contains("/bin/") || path.contains("/sbin/") ||
-                                            path.endsWith(".sh") || path.contains("/lib/apt/methods/")) {
-                                            outFile.setExecutable(true, false)
-                                        }
-                                    }
-                                    fileCount++
-                                }
-                            }
-                            entry = tis.nextEntry
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            extractionError = e
-        }
-
-        if (entryCount == 0) {
-            throw RuntimeException(
-                "解压失败: tarball 为空或损坏。错误: ${extractionError?.message ?: "无"}"
-            )
-        }
-        if (extractionError != null && fileCount < 100) {
-            throw RuntimeException(
-                "解压失败 ($entryCount 条目, $fileCount 文件): ${extractionError!!.message}"
-            )
-        }
-
-        // Phase 2: Create symlinks
-        var symlinkErrors = 0
-        var lastSymlinkError = ""
-        for ((target, path) in deferredSymlinks) {
-            try {
-                val file = File(path)
-                if (file.exists()) {
-                    if (file.isDirectory) {
-                        val linkTarget = if (target.startsWith("/")) {
-                            target.removePrefix("/")
-                        } else {
-                            val parent = file.parentFile?.absolutePath ?: rootfsDir
-                            File(parent, target).relativeTo(File(rootfsDir)).path
-                        }
-                        val realTargetDir = File(rootfsDir, linkTarget)
-                        if (realTargetDir.exists() && realTargetDir.isDirectory) {
-                            file.listFiles()?.forEach { child ->
-                                val dest = File(realTargetDir, child.name)
-                                if (!dest.exists()) child.renameTo(dest)
-                            }
-                        }
-                        deleteRecursively(file)
-                    } else {
-                        file.delete()
-                    }
-                }
-                file.parentFile?.mkdirs()
-                Os.symlink(target, path)
-            } catch (e: Exception) {
-                symlinkErrors++
-                lastSymlinkError = "$path -> $target: ${e.message}"
-            }
-        }
-
-        if (!File("$rootfsDir/bin/bash").exists() &&
-            !File("$rootfsDir/usr/bin/bash").exists()) {
-            throw RuntimeException(
-                "解压失败: rootfs 中找不到 bash。处理了 $entryCount 条目, " +
-                "$fileCount 文件, $symlinkCount 符号链接 ($symlinkErrors 错误)。" +
-                "最后符号链接错误: $lastSymlinkError"
-            )
-        }
-
+        extractionOrchestrator.extractRootfs(tarPath, rootfsDir)
         configureRootfs()
-        File(tarPath).delete()
     }
 
     // ---- Rootfs configuration ----
@@ -314,7 +181,7 @@ class BootstrapManager(
         tmpDir.setExecutable(true, false)
 
         // 9. Fix executable permissions
-        fixBinPermissions()
+        PermissionFixer().fixBinPermissions(rootfsDir)
     }
 
     private fun registerAndroidUsers() {
@@ -356,44 +223,6 @@ class BootstrapManager(
             for (name in groups) {
                 if (!content.contains(name))
                     gshadow.appendText("$name:*::root,aid_android\n")
-            }
-        }
-    }
-
-    private fun fixBinPermissions() {
-        val recursiveExecDirs = listOf(
-            "$rootfsDir/usr/bin", "$rootfsDir/usr/sbin",
-            "$rootfsDir/usr/local/bin", "$rootfsDir/usr/local/sbin",
-            "$rootfsDir/usr/lib/apt/methods", "$rootfsDir/usr/lib/dpkg",
-            "$rootfsDir/var/lib/dpkg/info",
-            "$rootfsDir/bin", "$rootfsDir/sbin",
-        )
-        for (dirPath in recursiveExecDirs) {
-            val dir = File(dirPath)
-            if (dir.exists() && dir.isDirectory) fixExecRecursive(dir)
-        }
-        for (dirPath in listOf("$rootfsDir/usr/lib", "$rootfsDir/lib")) {
-            val dir = File(dirPath)
-            if (dir.exists() && dir.isDirectory) fixSharedLibsRecursive(dir)
-        }
-    }
-
-    private fun fixExecRecursive(dir: File) {
-        dir.listFiles()?.forEach { file ->
-            if (file.isDirectory) fixExecRecursive(file)
-            else if (file.isFile) {
-                file.setReadable(true, false)
-                file.setExecutable(true, false)
-            }
-        }
-    }
-
-    private fun fixSharedLibsRecursive(dir: File) {
-        dir.listFiles()?.forEach { file ->
-            if (file.isDirectory) fixSharedLibsRecursive(file)
-            else if (file.name.endsWith(".so") || file.name.contains(".so.")) {
-                file.setReadable(true, false)
-                file.setExecutable(true, false)
             }
         }
     }

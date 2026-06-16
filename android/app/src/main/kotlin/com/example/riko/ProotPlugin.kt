@@ -18,6 +18,7 @@ class ProotPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private var appContext: Context? = null
     private var bootstrapManager: BootstrapManager? = null
     private var processManager: ProcessManager? = null
+    private var prootThread: Thread? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         appContext = binding.applicationContext
@@ -37,8 +38,12 @@ class ProotPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
         // Ensure directories exist on every app start
         Thread {
-            try { bootstrapManager?.setupDirectories() } catch (_: Exception) {}
-            try { bootstrapManager?.writeResolvConf() } catch (_: Exception) {}
+            try { bootstrapManager?.setupDirectories() } catch (e: Exception) {
+                android.util.Log.w("ProotPlugin", "setupDirectories failed", e)
+            }
+            try { bootstrapManager?.writeResolvConf() } catch (e: Exception) {
+                android.util.Log.w("ProotPlugin", "writeResolvConf failed", e)
+            }
         }.start()
     }
 
@@ -76,14 +81,16 @@ class ProotPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "runInProot" -> {
                 val command = call.argument<String>("command")
                 if (command != null) {
-                    Thread {
+                    prootThread?.interrupt()
+                    prootThread = Thread {
                         try {
                             val output = processManager?.runInProotSync(command) ?: ""
                             runOnUiThread(ctx) { result.success(output) }
                         } catch (e: Exception) {
                             runOnUiThread(ctx) { result.error("PROOT_ERROR", e.message, null) }
                         }
-                    }.start()
+                    }
+                    prootThread?.start()
                 } else {
                     result.error("INVALID_ARGS", "command required", null)
                 }
@@ -103,6 +110,8 @@ class ProotPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        prootThread?.interrupt()
+        prootThread = null
         appContext = null
         bootstrapManager = null
         processManager = null
