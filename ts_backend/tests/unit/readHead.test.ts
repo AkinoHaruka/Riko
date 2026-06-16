@@ -1,12 +1,16 @@
+/**
+ * ReadHead 工具单元测试
+ * 测试文件头部读取：前 N 行读取、行号格式化及错误处理
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import {
   executeHead,
-  formatLinesWithNumbers,
   readFileHead,
 } from '../../src/tools/readHead/readHead.js';
+import { formatLinesWithNumbers } from '../../src/tools/shared/formatLines.js';
 import { FILE_NOT_FOUND, IS_DIRECTORY } from '../../src/tools/types.js';
 
 const { tmpDir } = vi.hoisted(() => {
@@ -17,22 +21,23 @@ const { tmpDir } = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../src/config/auto_dream.js', () => ({
-  autoDreamConfig: {
-    memoryRootDir: tmpDir,
-    systemPromptsDir: tmpDir,
-  },
-}));
+import { setupVirtualPathMapping } from '../../src/core/validation/path.js';
 
 describe('ReadHead 工具', () => {
   beforeEach(() => {
     fs.mkdirSync(tmpDir, { recursive: true });
+    setupVirtualPathMapping({
+      memoryRootDir: tmpDir,
+      systemPromptsDir: tmpDir,
+      promptDir: tmpDir,
+    });
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // 测试读取文件前 N 行
   describe('读取前N行', () => {
     it('应读取文件的前5行并返回正确内容和行号', () => {
       const lines = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`);
@@ -73,6 +78,7 @@ describe('ReadHead 工具', () => {
     });
   });
 
+  // 测试行号右对齐格式化
   describe('行号格式化', () => {
     it('行号应右对齐并用 → 分隔', () => {
       const lines = ['alpha', 'beta', 'gamma'];

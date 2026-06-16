@@ -1,3 +1,12 @@
+/**
+ * 认证端到端测试
+ *
+ * 测试完整的用户认证流程，包括：
+ * - 注册→登录→访问受保护资源的完整链路
+ * - JWT token 格式校验（三段式）
+ * - 单用户模式下无 token / 无效 token 自动登录行为
+ * - 重复注册 409、错误密码 401、健康检查无需认证
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-e2e';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -20,6 +29,7 @@ describe('Auth E2E', () => {
     await teardownE2EApp(app);
   });
 
+  // 完整业务流程：注册 → 登录 → 用 token 访问受保护资源
   it('完整注册→登录→访问受保护资源流程', async () => {
     const regRes = await app.inject({
       method: 'POST',
@@ -45,6 +55,7 @@ describe('Auth E2E', () => {
     expect(protectedRes.statusCode).toBe(200);
   });
 
+  // 校验返回的 token 是标准 JWT 格式（header.payload.signature）
   it('注册返回有效 JWT token', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -74,6 +85,7 @@ describe('Auth E2E', () => {
     expect(response.statusCode).toBe(200);
   });
 
+  // 单用户模式：未携带 token 时自动以默认用户身份登录
   it('无 token 访问 - 单用户模式自动登录', async () => {
     const response = await app.inject({
       method: 'GET',
@@ -83,6 +95,7 @@ describe('Auth E2E', () => {
     expect(response.statusCode).toBe(200);
   });
 
+  // 单用户模式：无效 token 也会自动降级为默认用户
   it('无效 token 访问 - 单用户模式自动登录', async () => {
     const response = await app.inject({
       method: 'GET',

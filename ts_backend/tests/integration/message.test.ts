@@ -1,3 +1,9 @@
+/**
+ * 消息路由集成测试
+ *
+ * 测试 /messages 端点的 CRUD 操作，包括创建消息、列表查询、
+ * 分页查询、更新内容、单条删除和按会话批量删除。
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-testing';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -10,6 +16,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, teardownApp, registerUser } from './helpers.js';
 
+/**
+ * 创建测试会话，返回包含 id 的对象
+ * @param app - Fastify 应用实例
+ * @param token - 认证 token
+ * @param title - 会话标题，默认 '测试会话'
+ */
 async function createConversation(app: FastifyInstance, token: string, title = '测试会话') {
   const res = await app.inject({
     method: 'POST',
@@ -76,6 +88,7 @@ describe('Message Routes', () => {
     expect(body.length).toBe(1);
   });
 
+  // 分页查询返回 messages 数组、total 总数、limit 和 offset 元信息
   it('GET /messages?conversationId=X&limit=10&offset=0 - 200 分页返回', async () => {
     for (let i = 0; i < 3; i++) {
       await app.inject({

@@ -1,3 +1,7 @@
+/**
+ * SSE 事件格式化单元测试
+ * 测试 formatSseEvent 函数：SSE 事件格式生成、CJK 字符保留、多字段组合等
+ */
 import { describe, it, expect } from 'vitest';
 import { formatSseEvent } from '../../../src/domain/chat/stream.js';
 
@@ -17,6 +21,7 @@ describe('formatSseEvent', () => {
     expect(result).toBe('data: {"type":"error"}\n\n');
   });
 
+  // CJK 字符不应被转义为 \uXXXX，确保前端可直接显示
   it('CJK 字符不被转义，应保留原文', () => {
     const result = formatSseEvent('content', '你好世界');
     // 确保 CJK 字符原样输出，而非被转义为 \uXXXX 形式

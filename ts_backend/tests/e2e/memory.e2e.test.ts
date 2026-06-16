@@ -1,3 +1,11 @@
+/**
+ * 记忆端到端测试
+ *
+ * 测试 /memories 端点的完整 CRUD 流程，包括：
+ * - 创建记忆、获取列表、按关键词搜索
+ * - 按来源批量删除、清空全部、单条删除
+ * - 不存在的记忆返回 404
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-e2e';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -65,6 +73,7 @@ describe('Memory E2E', () => {
     expect(body.memories.length).toBe(2);
   });
 
+  // 搜索接口同时匹配 key 和 content 字段
   it('搜索记忆（按关键词）', async () => {
     await app.inject({
       method: 'POST',
@@ -91,6 +100,7 @@ describe('Memory E2E', () => {
     expect(body.memories[0].key).toBe('test_key');
   });
 
+  // 按来源批量删除，验证只删除匹配 source 的记录
   it('按来源删除记忆', async () => {
     await app.inject({
       method: 'POST',

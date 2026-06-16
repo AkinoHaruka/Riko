@@ -1,3 +1,11 @@
+/**
+ * WebSocket 事件广播端到端测试
+ *
+ * 测试 /ws/events WebSocket 端点的连接认证和事件广播功能，包括：
+ * - 有效 token 连接成功
+ * - 无 token / 无效 token 连接被拒绝
+ * - 通过 EventManager 广播事件后客户端能接收到
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-e2e';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -21,6 +29,7 @@ describe('WebSocket Events E2E', () => {
     const auth = await registerAndLogin(app);
     token = auth.token;
 
+    // WebSocket 测试需要真实端口，使用 port: 0 让系统自动分配
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address() as { port: number };
     baseUrl = `ws://127.0.0.1:${address.port}`;
@@ -49,6 +58,7 @@ describe('WebSocket Events E2E', () => {
     });
   });
 
+  // 单用户模式下无 token 连接可能被接受或以不同方式关闭
   it('rejects connection without token', async () => {
     const wsUrl = `${baseUrl}/ws/events`;
     const ws = new WebSocket(wsUrl);
@@ -59,10 +69,10 @@ describe('WebSocket Events E2E', () => {
       setTimeout(() => resolve({ code: -1, reason: 'timeout' }), 5000);
     });
 
-    // single-user mode: connection accepted or closed differently
     expect(closed.code).toBeGreaterThanOrEqual(-1);
   });
 
+  // 无效 token 应被 WebSocket 关闭码 4003 拒绝
   it('rejects connection with invalid token', async () => {
     const wsUrl = `${baseUrl}/ws/events?token=invalid-token-value`;
     const ws = new WebSocket(wsUrl);
@@ -76,6 +86,7 @@ describe('WebSocket Events E2E', () => {
     expect(closed.code).toBe(4003);
   });
 
+  // 通过 EventManager 广播事件，验证 WebSocket 客户端能接收到
   it('receives broadcast events', async () => {
     const wsUrl = `${baseUrl}/ws/events?token=${token}`;
     const ws = new WebSocket(wsUrl);
@@ -98,6 +109,7 @@ describe('WebSocket Events E2E', () => {
         } catch {}
       });
 
+      // 延迟 100ms 后广播事件，确保客户端已就绪
       setTimeout(() => {
         eventManager.broadcast('test_event', { hello: 'world' });
       }, 100);

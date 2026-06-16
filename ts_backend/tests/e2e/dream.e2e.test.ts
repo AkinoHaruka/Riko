@@ -1,3 +1,11 @@
+/**
+ * Dream（梦境整合）端到端测试
+ *
+ * 测试 /dream 和 /dream/status 端点，包括：
+ * - 触发梦境任务（返回 started 或错误状态）
+ * - 查询梦境任务状态
+ * - 单用户模式下未认证请求自动登录
+ */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildE2EApp, teardownE2EApp, registerAndLogin } from './helpers.js';
@@ -23,6 +31,7 @@ describe('Dream E2E', () => {
     await teardownE2EApp(app);
   });
 
+  // 梦境任务可能启动成功(200)，也可能因并发/无数据返回 409 或 500
   it('POST /dream — returns started status or error response', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -51,6 +60,7 @@ describe('Dream E2E', () => {
     expect(body).toBeDefined();
   });
 
+  // 单用户模式下未认证请求自动登录
   it('POST /dream — single-user auto-login', async () => {
     const res = await app.inject({
       method: 'POST',

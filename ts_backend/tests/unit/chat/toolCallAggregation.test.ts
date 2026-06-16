@@ -1,3 +1,8 @@
+/**
+ * 工具调用聚合单元测试
+ * 测试 accumulateToolCall 函数：流式工具调用片段的累积拼接、多工具并行、
+ * id/name 延迟赋值等场景
+ */
 import { describe, it, expect } from 'vitest';
 import { accumulateToolCall } from '../../../src/domain/chat/types.js';
 import type { ToolCallAccumulator, ToolCallDelta } from '../../../src/domain/chat/types.js';
@@ -21,6 +26,7 @@ describe('accumulateToolCall', () => {
     expect(accumulator[0].function.arguments).toBe('{"pattern":"hello","path":"/src"}');
   });
 
+  // 不同 index 的工具调用独立累积
   it('多个工具调用按不同 index 分别累积', () => {
     const accumulator: ToolCallAccumulator = {};
     const chunks: ToolCallDelta[] = [
@@ -62,6 +68,7 @@ describe('accumulateToolCall', () => {
     expect(merged.new_string).toBe('bar');
   });
 
+  // 首个片段设置 id/name 后，后续片段不应覆盖
   it('id 和 name 在首个片段设置后，后续片段不会覆盖', () => {
     const accumulator: ToolCallAccumulator = {};
     const chunks: ToolCallDelta[] = [
@@ -78,6 +85,7 @@ describe('accumulateToolCall', () => {
     expect(accumulator[0].function.arguments).toBe('{"content":"hi"}');
   });
 
+  // 某些 API 实现中首个片段可能不含 id，后续片段才提供
   it('首个片段 id 为空字符串时，后续非空 id 会正确赋值', () => {
     const accumulator: ToolCallAccumulator = {};
     const chunks: ToolCallDelta[] = [

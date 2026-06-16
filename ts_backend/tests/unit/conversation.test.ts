@@ -1,3 +1,7 @@
+/**
+ * Conversation 领域单元测试
+ * 测试会话的创建、列表查询、更新、删除等核心 CRUD 操作
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initDb, closeDb, getDb } from '../../src/core/database/index.js';
 import { generateId } from '../../src/core/utils/id.js';
@@ -8,6 +12,7 @@ import {
   deleteConversation,
 } from '../../src/domain/conversation/index.js';
 
+/** 创建测试用户，返回用户 ID */
 function createTestUser(username = 'testuser'): string {
   const db = getDb();
   const id = generateId('users');
@@ -75,6 +80,7 @@ describe('Conversation 领域', () => {
     expect(() => updateConversation('nonexistent-id', userId, { title: 'x' })).toThrow('会话不存在或无权访问');
   });
 
+  // 验证删除会话时关联消息也被级联删除（事务原子性）
   it('deleteConversation() 原子删除会话及其消息', () => {
     const conv = createConversation(userId, 'title');
     const db = getDb();

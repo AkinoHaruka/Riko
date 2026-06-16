@@ -1,3 +1,7 @@
+/**
+ * Setting 领域单元测试
+ * 测试设置的保存、查询、加密存储、API Key 管理及删除操作
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initDb, closeDb, getDb } from '../../src/core/database/index.js';
 import { generateId } from '../../src/core/utils/id.js';
@@ -10,6 +14,7 @@ import {
   deleteSetting,
 } from '../../src/domain/setting/index.js';
 
+/** 创建测试用户，返回用户 ID */
 function createTestUser(username = 'testuser'): string {
   const db = getDb();
   const id = generateId('users');
@@ -38,6 +43,7 @@ describe('Setting 领域', () => {
     expect(result.is_encrypted).toBe(0);
   });
 
+  // 以 apikey_ 开头的键自动加密存储
   it('saveSetting() 敏感键加密存储', () => {
     const result = saveSetting(userId, { key: 'apikey_deepseek', value: 'sk-123' });
     expect(result.is_encrypted).toBe(1);
@@ -87,6 +93,7 @@ describe('Setting 领域', () => {
     expect(row.value).not.toBe('sk-mykey');
   });
 
+  // 传入空字符串删除 API Key
   it('saveApiKey() 空字符串删除 Key', () => {
     saveApiKey(userId, { api_key: 'sk-mykey' });
     saveApiKey(userId, { api_key: '' });

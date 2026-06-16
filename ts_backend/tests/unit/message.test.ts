@@ -1,3 +1,7 @@
+/**
+ * Message 领域单元测试
+ * 测试消息的创建、列表查询、更新、删除、批量删除及事件广播控制
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { initDb, closeDb, getDb } from '../../src/core/database/index.js';
 import { generateId } from '../../src/core/utils/id.js';
@@ -10,6 +14,7 @@ import {
 } from '../../src/domain/message/index.js';
 import { eventManager } from '../../src/core/events/index.js';
 
+/** 创建测试用户，返回用户 ID */
 function createTestUser(username = 'testuser'): string {
   const db = getDb();
   const id = generateId('users');
@@ -18,6 +23,7 @@ function createTestUser(username = 'testuser'): string {
   return id;
 }
 
+/** 创建测试会话，返回会话 ID */
 function createTestConversation(userId: string, title = 'test'): string {
   const db = getDb();
   const id = generateId('conversations');
@@ -42,6 +48,7 @@ describe('Message 领域', () => {
     closeDb();
   });
 
+  // 创建消息时应自动更新所属会话的 updated_at 时间戳
   it('createMessage() 创建消息并更新会话时间戳', () => {
     const db = getDb();
     db.prepare("UPDATE conversations SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(conversationId);
@@ -110,6 +117,7 @@ describe('Message 领域', () => {
     expect(updated.content).toBe('new');
   });
 
+  // 验证 skip_broadcast 参数可以跳过事件广播（用于内部静默更新）
   it('updateMessage() skip_broadcast=true 跳过事件广播', () => {
     const msg = createMessage(userId, { conversation_id: conversationId, role: 'user', content: 'hello' });
 

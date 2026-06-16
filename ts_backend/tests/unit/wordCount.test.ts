@@ -1,3 +1,7 @@
+/**
+ * WordCount 工具单元测试
+ * 测试文件词数统计：单文件统计、目录批量统计、超大文件跳过及路径校验
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
@@ -40,6 +44,7 @@ describe('WordCount 工具', () => {
     });
   });
 
+  // 测试目录下按 glob 模式批量统计
   describe('目录批量统计', () => {
     it('应按 glob 模式统计目录下匹配的文件', () => {
       // 创建目录结构
@@ -61,6 +66,7 @@ describe('WordCount 工具', () => {
     });
   });
 
+  // 测试超大文件跳过逻辑
   describe('超大文件跳过', () => {
     it('超出大小限制的文件应返回 FILE_TOO_LARGE 错误', () => {
       const filePath = 'bigfile.txt';

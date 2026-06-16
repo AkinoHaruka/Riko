@@ -1,3 +1,15 @@
+/**
+ * 会话记忆系统（SessionMemory）单元测试
+ *
+ * 覆盖范围：
+ * - token 估算（estimateTokenCount）：ASCII / CJK / 混合文本的 token 计数
+ * - 章节分析（analyzeSectionSizes）：Markdown 内容中各章节的 token 大小解析
+ * - 变量替换（substituteVariables）：模板中 {{变量}} 的替换逻辑
+ * - 工具定义（buildAllToolDefinitions）：会话记忆相关工具的数量和结构校验
+ * - 章节提醒（generateSectionReminders）：超限警告与严重警告的生成逻辑
+ * - SessionMemoryManager：路径生成、初始创建、读取、shouldEnable 三级判断、
+ *   updateState 数据库 upsert、getOrCreateSessionMemory 组合逻辑
+ */
 import { describe, it, expect, afterAll, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
@@ -20,17 +32,19 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+// ── token 估算 ──
+
 describe('estimateTokenCount', () => {
-  it('纯 ASCII 文本按每 4 字符约 1 token 估算', () => {
+  it('纯 ASCII 文本按每字符约 0.3 token 估算', () => {
     const text = 'abcdefghij';
     const tokens = estimateTokenCount(text);
-    expect(tokens).toBe(2);
+    expect(tokens).toBe(3);
   });
 
-  it('纯 CJK 文本按每 1.5 字符约 1 token 估算', () => {
+  it('纯 CJK 文本按每字符约 0.6 token 估算', () => {
     const text = '你好世界测试';
     const tokens = estimateTokenCount(text);
-    expect(tokens).toBe(4);
+    expect(tokens).toBe(3);
   });
 
   it('混合 CJK 和 ASCII 文本分别计算后求和', () => {
@@ -43,6 +57,8 @@ describe('estimateTokenCount', () => {
     expect(estimateTokenCount('')).toBe(0);
   });
 });
+
+// ── 章节分析 ──
 
 describe('analyzeSectionSizes', () => {
   it('解析 markdown 内容中各章节的 token 大小', () => {
@@ -70,6 +86,8 @@ describe('analyzeSectionSizes', () => {
     expect(Object.keys(sizes)).toHaveLength(0);
   });
 });
+
+// ── 变量替换 ──
 
 describe('substituteVariables', () => {
   it('替换 {{notesPath}} 和 {{currentNotes}} 变量', () => {
@@ -99,6 +117,8 @@ describe('substituteVariables', () => {
   });
 });
 
+// ── 工具定义 ──
+
 describe('buildAllToolDefinitions', () => {
   it('返回 6 个工具定义', () => {
     const definitions = buildAllToolDefinitions();
@@ -117,6 +137,8 @@ describe('buildAllToolDefinitions', () => {
   });
 });
 
+// ── 章节提醒生成 ──
+
 describe('generateSectionReminders', () => {
   it('无超限时返回空字符串', () => {
     const sectionSizes = { '# 小章节': 100 };
@@ -125,6 +147,7 @@ describe('generateSectionReminders', () => {
     expect(result).toBe('');
   });
 
+  // 总 token 超限时生成包含关键章节名称的严重警告
   it('总 token 超限时生成严重警告', () => {
     const sectionSizes = { '# 章节': 100 };
     const totalTokens = MAX_TOTAL_SESSION_MEMORY_TOKENS + 1;
@@ -146,6 +169,7 @@ describe('generateSectionReminders', () => {
     expect(result).not.toContain('# 正常章节');
   });
 
+  // 两种超限同时触发时，提醒内容应同时包含两种类型
   it('总超限且单章节超限时同时包含两种提醒', () => {
     const sectionSizes = { '# 超长章节': MAX_SECTION_LENGTH + 100 };
     const totalTokens = MAX_TOTAL_SESSION_MEMORY_TOKENS + 1;
@@ -155,6 +179,8 @@ describe('generateSectionReminders', () => {
     expect(result).toContain('# 超长章节');
   });
 });
+
+// ── SessionMemoryManager 基础操作 ──
 
 describe('SessionMemoryManager', () => {
   it('getSessionMemoryPath 返回正确的路径', () => {
@@ -180,6 +206,7 @@ describe('SessionMemoryManager', () => {
     expect(fileContent).toBe(content);
   });
 
+  // 已存在的笔记文件不应被覆盖，保留用户已有内容
   it('createInitialSessionMemory 对已存在的文件不覆盖', () => {
     const manager = new SessionMemoryManager(tmpDir);
     const conversationId = 'conv-8888';
@@ -216,6 +243,9 @@ describe('SessionMemoryManager', () => {
   });
 });
 
+// ── shouldEnable 三级判断逻辑 ──
+// 优先级：笔记文件已存在 > 数据库 is_initialized 标记 > 消息数达到阈值
+
 describe('SessionMemoryManager - shouldEnable 三级判断', () => {
   let convId: string;
 
@@ -233,6 +263,7 @@ describe('SessionMemoryManager - shouldEnable 三级判断', () => {
     closeDb();
   });
 
+  // 第一级：只要笔记文件存在就启用，不受消息数影响
   it('第一级：笔记文件已存在时始终启用', () => {
     const manager = new SessionMemoryManager(tmpDir);
     const filePath = manager.getSessionMemoryPath(convId);
@@ -246,6 +277,7 @@ describe('SessionMemoryManager - shouldEnable 三级判断', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  // 第二级：数据库中 is_initialized=1 表示曾经初始化过
   it('第二级：数据库标记 is_initialized=1 时启用', () => {
     const manager = new SessionMemoryManager(tmpDir);
     const db = getDb();
@@ -257,6 +289,7 @@ describe('SessionMemoryManager - shouldEnable 三级判断', () => {
     expect(enabled).toBe(true);
   });
 
+  // 第三级：消息数达到 MINIMUM_MESSAGES_TO_INIT 阈值时自动启用
   it('第三级：消息数达到阈值时启用', () => {
     const manager = new SessionMemoryManager(tmpDir);
     const enabled = manager.shouldEnable(convId, MINIMUM_MESSAGES_TO_INIT);
@@ -269,6 +302,8 @@ describe('SessionMemoryManager - shouldEnable 三级判断', () => {
     expect(enabled).toBe(false);
   });
 });
+
+// ── updateState 数据库 upsert ──
 
 describe('SessionMemoryManager - updateState', () => {
   let convId: string;
@@ -298,6 +333,7 @@ describe('SessionMemoryManager - updateState', () => {
     expect(row!.notes_token_count).toBe(150);
   });
 
+  // 再次调用应更新而非插入重复记录
   it('再次 upsert 更新已有记录', () => {
     const manager = new SessionMemoryManager(tmpDir);
     manager.updateState(convId, 150);
@@ -309,6 +345,8 @@ describe('SessionMemoryManager - updateState', () => {
     expect(rows[0].notes_token_count).toBe(300);
   });
 });
+
+// ── getOrCreateSessionMemory 组合逻辑 ──
 
 describe('SessionMemoryManager - getOrCreateSessionMemory', () => {
   let convId: string;
@@ -334,6 +372,7 @@ describe('SessionMemoryManager - getOrCreateSessionMemory', () => {
     expect(isEnabled).toBe(false);
   });
 
+  // 消息数达到阈值时自动创建模板文件并返回内容
   it('消息数达到阈值时自动创建并返回模板内容', () => {
     const manager = new SessionMemoryManager(tmpDir);
     const [content, isEnabled] = manager.getOrCreateSessionMemory(convId, MINIMUM_MESSAGES_TO_INIT);

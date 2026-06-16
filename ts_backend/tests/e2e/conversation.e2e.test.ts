@@ -1,3 +1,12 @@
+/**
+ * 会话端到端测试
+ *
+ * 测试 /conversations 端点的完整 CRUD 流程，包括：
+ * - 创建、列表、更新标题、更新归档状态、删除
+ * - 删除会话后关联消息的级联删除验证
+ * - 不存在的会话返回 404
+ * - 单用户模式下未认证请求自动登录
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-e2e';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -126,6 +135,7 @@ describe('Conversation E2E', () => {
     expect(body.message).toBe('删除成功');
   });
 
+  // 验证删除会话后，其关联消息也被级联删除
   it('删除会话后关联消息也被删除', async () => {
     const createRes = await app.inject({
       method: 'POST',
@@ -175,6 +185,7 @@ describe('Conversation E2E', () => {
     expect(body.error).toContain('不存在或无权');
   });
 
+  // 单用户模式：未携带 token 时自动以默认用户身份登录
   it('未认证请求 - 单用户模式自动登录', async () => {
     const response = await app.inject({
       method: 'GET',

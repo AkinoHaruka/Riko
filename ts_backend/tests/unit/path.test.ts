@@ -1,3 +1,7 @@
+/**
+ * 路径校验模块单元测试
+ * 测试路径安全校验：合法路径接受、路径遍历拒绝、空字节注入拒绝、绝对路径拒绝等
+ */
 import { describe, it, expect } from 'vitest';
 import path from 'path';
 import os from 'os';

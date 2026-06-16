@@ -1,3 +1,9 @@
+/**
+ * 会话路由集成测试
+ *
+ * 测试 /conversations 端点的 CRUD 操作，包括创建、列表、更新标题、
+ * 更新归档状态、删除、404 处理，以及单用户模式下无 token 自动登录行为。
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-testing';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -135,13 +141,13 @@ describe('Conversation Routes', () => {
     expect(body.error).toContain('不存在或无权');
   });
 
+  // 单用户模式：未携带 token 时自动以默认用户身份登录，不会返回 401
   it('无 token 请求 - 自动以默认用户登录', async () => {
     const response = await app.inject({
       method: 'GET',
       url: '/conversations',
     });
 
-    // 单用户模式：无 token 自动登录为默认用户，返回 200
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(Array.isArray(body)).toBe(true);

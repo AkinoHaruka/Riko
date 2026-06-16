@@ -13,6 +13,12 @@ export default defineConfig({
       ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef',
       LOG_LEVEL: 'ERROR',
     },
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'lcov'],
+      include: ['src/**/*.ts'],
+      exclude: ['src/**/*.d.ts', 'src/**/index.ts'],
+    },
   },
   resolve: {
     extensions: ['.ts', '.js', '.mjs'],

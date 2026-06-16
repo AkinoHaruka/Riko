@@ -1,3 +1,12 @@
+/**
+ * 上下文压缩（Compact）端到端测试
+ *
+ * 测试 /compact 和 /compact/status 端点，包括：
+ * - 缺少 conversation_id 参数校验（400）
+ * - 不存在的会话返回 404
+ * - 有效会话的 token 用量查询
+ * - 单用户模式下未认证请求的行为
+ */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildE2EApp, teardownE2EApp, registerAndLogin } from './helpers.js';
@@ -23,6 +32,7 @@ describe('Compact E2E', () => {
     token = auth.token;
     userId = auth.userId;
 
+    // 直接向数据库插入会话和消息，避免依赖其他 API
     const db = getDb();
     conversationId = generateId('conversations');
     db.prepare(
@@ -40,6 +50,8 @@ describe('Compact E2E', () => {
   afterAll(async () => {
     await teardownE2EApp(app);
   });
+
+  // ── POST /compact ──
 
   it('POST /compact — returns error for missing conversation_id', async () => {
     const res = await app.inject({
@@ -64,6 +76,8 @@ describe('Compact E2E', () => {
 
     expect(res.statusCode).toBe(404);
   });
+
+  // ── GET /compact/status ──
 
   it('GET /compact/status — returns token usage for valid conversation', async () => {
     const res = await app.inject({
@@ -101,6 +115,7 @@ describe('Compact E2E', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  // 单用户模式下未认证请求通过认证，但因会话不存在返回 404
   it('POST /compact — unauthenticated (single-user mode passes auth, returns 404)', async () => {
     const res = await app.inject({
       method: 'POST',

@@ -1,7 +1,13 @@
+/**
+ * Chat API 参数构建单元测试
+ * 测试 buildApiParams 函数：必填字段传递、可选字段过滤、systemPrompt/compactContext 注入、
+ * thinking 参数处理及 session memory extension 等
+ */
 import { describe, it, expect } from 'vitest';
-import { buildApiParams } from '../../../src/domain/chat/types.js';
+import { buildApiParams, MAX_TOKENS_DEFAULT, MAX_TOKENS_CAP } from '../../../src/domain/chat/types.js';
 import type { ChatCompletionRequest } from '../../../src/domain/chat/types.js';
 
+/** 构造基础请求对象，可覆盖部分字段 */
 function makeBaseRequest(overrides?: Partial<ChatCompletionRequest>): ChatCompletionRequest {
   return {
     messages: [{ role: 'user', content: 'hello' }],
@@ -20,7 +26,7 @@ describe('buildApiParams', () => {
     expect(params.stream).toBe(true);
     expect(params.messages).toEqual([{ role: 'user', content: 'hello' }]);
     expect(params).not.toHaveProperty('temperature');
-    expect(params).not.toHaveProperty('max_tokens');
+    expect(params.max_tokens).toBe(MAX_TOKENS_DEFAULT);
     expect(params).not.toHaveProperty('top_p');
     expect(params).not.toHaveProperty('reasoning_effort');
     expect(params).not.toHaveProperty('response_format');
@@ -46,7 +52,7 @@ describe('buildApiParams', () => {
     expect(params.stop).toEqual(['\n']);
   });
 
-  it('undefined 的可选字段应被排除', () => {
+  it('undefined 的可选字段应被排除（max_tokens 除外，使用默认值）', () => {
     const request = makeBaseRequest({
       temperature: 0.5,
       max_tokens: undefined,
@@ -55,10 +61,23 @@ describe('buildApiParams', () => {
     const params = buildApiParams(request);
 
     expect(params.temperature).toBe(0.5);
-    expect(params).not.toHaveProperty('max_tokens');
+    expect(params.max_tokens).toBe(MAX_TOKENS_DEFAULT);
     expect(params).not.toHaveProperty('top_p');
   });
 
+  it('max_tokens 超过上限时被裁剪为 MAX_TOKENS_CAP', () => {
+    const request = makeBaseRequest({ max_tokens: 384000 });
+    const params = buildApiParams(request);
+    expect(params.max_tokens).toBe(MAX_TOKENS_CAP);
+  });
+
+  it('max_tokens 在上限内时保持原值', () => {
+    const request = makeBaseRequest({ max_tokens: 65536 });
+    const params = buildApiParams(request);
+    expect(params.max_tokens).toBe(65536);
+  });
+
+  // systemPrompt 作为 system 消息插入到 messages 开头
   it('systemPrompt 注入时，在 messages 开头创建新的 system 消息', () => {
     const request = makeBaseRequest({
       messages: [
@@ -72,6 +91,7 @@ describe('buildApiParams', () => {
     expect(messages[1]).toEqual({ role: 'user', content: 'hello' });
   });
 
+  // compactContext 用 <compact-context> 标签包裹后作为 user 消息注入
   it('compactContext 注入时，在 messages 开头创建带标签的 user 消息', () => {
     const request = makeBaseRequest({
       messages: [
@@ -111,6 +131,7 @@ describe('buildApiParams', () => {
     expect(params).not.toHaveProperty('extra_body');
   });
 
+  // systemPrompt 和 compactContext 同时存在时的消息顺序
   it('systemPrompt 和 compactContext 同时存在时，systemPrompt 作为 system 消息，compactContext 作为 user 消息', () => {
     const request = makeBaseRequest({
       messages: [{ role: 'user', content: 'hi' }],
@@ -183,6 +204,7 @@ describe('buildApiParams', () => {
     expect(params).not.toHaveProperty('extra_body');
   });
 
+  // thinking enabled 时 DeepSeek API 不允许传 temperature 和 top_p
   it('thinking enabled 时 temperature 和 top_p 被排除', () => {
     const request = makeBaseRequest({
       thinking: { type: 'enabled' },
@@ -209,6 +231,7 @@ describe('buildApiParams', () => {
     expect(params.top_p).toBe(0.9);
   });
 
+  // 验证包含会话记忆扩展的完整系统提示词注入
   it('systemPrompt 包含 session memory extension 时，system 消息包含完整内容', () => {
     const mainPrompt = '我是璃，十四岁，一只猫娘。';
     const toolRules = '# 工具调用规则\n使用工具时请遵循以下规则。';

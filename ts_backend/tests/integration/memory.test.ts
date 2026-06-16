@@ -1,3 +1,12 @@
+/**
+ * 记忆路由集成测试
+ *
+ * 测试 /memories 端点的完整 CRUD 流程，包括：
+ * - 列表查询（全部 / 按类型筛选）
+ * - 关键词搜索
+ * - 创建（含参数校验）
+ * - 单条删除、按来源批量删除、清空全部
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-testing';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -23,6 +32,8 @@ describe('Memory Routes', () => {
   afterEach(async () => {
     await teardownApp(app);
   });
+
+  // ── 查询 ──
 
   it('GET /memories - 200 返回所有记忆', async () => {
     await app.inject({
@@ -71,6 +82,7 @@ describe('Memory Routes', () => {
     expect(body.memories[0].type).toBe('fact');
   });
 
+  // 搜索接口同时匹配 key 和 content 字段
   it('GET /memories/search?keyword=test - 200 搜索记忆', async () => {
     await app.inject({
       method: 'POST',
@@ -96,6 +108,8 @@ describe('Memory Routes', () => {
     expect(body.memories.length).toBe(1);
     expect(body.memories[0].key).toBe('test_key');
   });
+
+  // ── 创建 ──
 
   it('POST /memories - 200 创建记忆', async () => {
     const response = await app.inject({
@@ -123,8 +137,11 @@ describe('Memory Routes', () => {
 
     expect(response.statusCode).toBe(400);
     const body = response.json();
-    expect(body.error).toContain('不能为空');
+    expect(body.success).toBe(false);
+    expect(body.error_code).toBe('VALIDATION_ERROR');
   });
+
+  // ── 删除 ──
 
   it('DELETE /memories/:id - 200 删除记忆', async () => {
     const createRes = await app.inject({
@@ -147,6 +164,7 @@ describe('Memory Routes', () => {
     expect(body.id).toBe(id);
   });
 
+  // 按来源批量删除，只删除匹配 source 的记录
   it('DELETE /memories/by-source?source=x - 200 按来源删除', async () => {
     await app.inject({
       method: 'POST',

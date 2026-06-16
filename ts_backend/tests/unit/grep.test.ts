@@ -1,3 +1,7 @@
+/**
+ * Grep 工具单元测试
+ * 测试文件内容搜索：多种输出模式、glob 过滤、大小写不敏感、分页及错误处理
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'path';
 import os from 'os';
@@ -12,13 +16,8 @@ const { tmpDir } = vi.hoisted(() => {
   };
 });
 
-// 模拟 autoDreamConfig，使 resolveVirtualPath 使用我们的临时目录
-vi.mock('../../src/config/auto_dream.js', () => ({
-  autoDreamConfig: {
-    memoryRootDir: tmpDir,
-    systemPromptsDir: tmpDir,
-  },
-}));
+// 配置虚拟路径映射，使 resolveVirtualPath 使用我们的临时目录
+import { setupVirtualPathMapping } from '../../src/core/validation/path.js';
 
 import { executeGrep } from '../../src/tools/grep/grep.js';
 import { INVALID_PATTERN, PATH_NOT_FOUND } from '../../src/tools/types.js';
@@ -26,18 +25,23 @@ import { INVALID_PATTERN, PATH_NOT_FOUND } from '../../src/tools/types.js';
 describe('Grep 工具', () => {
   beforeEach(() => {
     fs.mkdirSync(tmpDir, { recursive: true });
+    setupVirtualPathMapping({
+      memoryRootDir: tmpDir,
+      systemPromptsDir: tmpDir,
+      promptDir: tmpDir,
+    });
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('files_with_matches 模式 - 仅返回匹配的文件', () => {
+  it('files_with_matches 模式 - 仅返回匹配的文件', async () => {
     fs.writeFileSync(path.join(tmpDir, 'match.txt'), 'hello world\nfoo bar');
     fs.writeFileSync(path.join(tmpDir, 'nomatch.txt'), 'no match here');
     fs.writeFileSync(path.join(tmpDir, 'another.txt'), 'hello again');
 
-    const result = executeGrep({
+    const result = await executeGrep({
       pattern: 'hello',
       path: '',
       output_mode: 'files_with_matches',
@@ -52,10 +56,10 @@ describe('Grep 工具', () => {
     expect(result.filenames).not.toContain('nomatch.txt');
   });
 
-  it('content 模式 - 输出格式为 path:lineNum:content', () => {
+  it('content 模式 - 输出格式为 path:lineNum:content', async () => {
     fs.writeFileSync(path.join(tmpDir, 'sample.txt'), 'first line\nhello world\nthird line');
 
-    const result = executeGrep({
+    const result = await executeGrep({
       pattern: 'hello',
       path: '',
       output_mode: 'content',
@@ -70,10 +74,10 @@ describe('Grep 工具', () => {
     expect(result.content).toContain('sample.txt:2:hello world');
   });
 
-  it('count 模式 - 输出格式为 path:count', () => {
+  it('count 模式 - 输出格式为 path:count', async () => {
     fs.writeFileSync(path.join(tmpDir, 'count.txt'), 'hello\nworld\nhello again');
 
-    const result = executeGrep({
+    const result = await executeGrep({
       pattern: 'hello',
       path: '',
       output_mode: 'count',
@@ -88,12 +92,12 @@ describe('Grep 工具', () => {
     expect(result.content).toContain('count.txt:2');
   });
 
-  it('glob 过滤 - 仅搜索匹配 glob 模式的文件', () => {
+  it('glob 过滤 - 仅搜索匹配 glob 模式的文件', async () => {
     fs.writeFileSync(path.join(tmpDir, 'doc.md'), 'hello markdown');
     fs.writeFileSync(path.join(tmpDir, 'notes.txt'), 'hello text');
     fs.writeFileSync(path.join(tmpDir, 'readme.md'), 'hello readme');
 
-    const result = executeGrep({
+    const result = await executeGrep({
       pattern: 'hello',
       path: '',
       output_mode: 'files_with_matches',
@@ -108,10 +112,10 @@ describe('Grep 工具', () => {
     expect(result.filenames).not.toContain('notes.txt');
   });
 
-  it('大小写不敏感搜索', () => {
+  it('大小写不敏感搜索', async () => {
     fs.writeFileSync(path.join(tmpDir, 'mixed.txt'), 'Hello World\nHELLO\nhello');
 
-    const result = executeGrep({
+    const result = await executeGrep({
       pattern: 'hello',
       path: '',
       output_mode: 'content',
@@ -124,13 +128,13 @@ describe('Grep 工具', () => {
     expect(result.num_lines).toBe(3);
   });
 
-  it('分页 - head_limit 和 offset 配合使用', () => {
+  it('分页 - head_limit 和 offset 配合使用', async () => {
     // 创建多个匹配文件
     for (let i = 0; i < 5; i++) {
       fs.writeFileSync(path.join(tmpDir, `file${i}.txt`), `pattern match ${i}`);
     }
 
-    const result = executeGrep({
+    const result = await executeGrep({
       pattern: 'pattern',
       path: '',
       output_mode: 'files_with_matches',
@@ -145,8 +149,8 @@ describe('Grep 工具', () => {
     expect(result.applied_limit).toBe(2);
   });
 
-  it('无效正则表达式 - 返回 INVALID_PATTERN 错误', () => {
-    const result = executeGrep({
+  it('无效正则表达式 - 返回 INVALID_PATTERN 错误', async () => {
+    const result = await executeGrep({
       pattern: '[invalid(',
       path: '',
       output_mode: 'files_with_matches',
@@ -157,8 +161,8 @@ describe('Grep 工具', () => {
     expect(result.error_code).toBe(INVALID_PATTERN);
   });
 
-  it('路径不存在 - 返回 PATH_NOT_FOUND 错误', () => {
-    const result = executeGrep({
+  it('路径不存在 - 返回 PATH_NOT_FOUND 错误', async () => {
+    const result = await executeGrep({
       pattern: 'test',
       path: 'nonexistent_dir',
       output_mode: 'files_with_matches',

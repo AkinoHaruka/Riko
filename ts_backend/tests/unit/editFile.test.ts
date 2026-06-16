@@ -1,3 +1,7 @@
+/**
+ * EditFile 工具单元测试
+ * 测试文件编辑操作：文本替换、新建文件、批量替换、智能换行处理、路径安全校验等
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
@@ -61,6 +65,7 @@ describe('EditFile 工具', () => {
     expect(readFile('replace.txt')).toBe('hi world');
   });
 
+  // old_string 为空时表示创建新文件
   it('创建新文件', () => {
     const result = executeEdit({
       file_path: 'new-file.txt',
@@ -101,6 +106,7 @@ describe('EditFile 工具', () => {
     expect(readFile('replace-all.txt')).toBe('xxx bbb xxx ccc xxx');
   });
 
+  // 验证删除内容时智能处理尾部换行，避免留下空行
   it('删除内容智能处理换行', () => {
     // 删除的文本不以 \n 结尾，但文件中该文本后紧跟 \n
     // 应一并删除尾部换行，避免留下空行
@@ -116,6 +122,7 @@ describe('EditFile 工具', () => {
     expect(readFile('smart-nl.txt')).toBe('line1\nline2\n');
   });
 
+  // Markdown 文件保留行尾空格（用于 Markdown 换行语法）
   it('Markdown文件保留行尾空格', () => {
     createFile('trailing.md', 'line1\nline2\n');
 
@@ -196,6 +203,7 @@ describe('EditFile 工具', () => {
     }
   });
 
+  // 已存在的文件不允许用 old_string='' 的方式覆盖
   it('文件已存在且old_string为空', () => {
     createFile('existing.txt', 'existing content');
 
@@ -241,6 +249,7 @@ describe('EditFile 工具', () => {
     }
   });
 
+  // 验证原子写入：文件内容正确且无残留临时文件
   it('原子写入 - 文件内容正确且无残留临时文件', () => {
     createFile('atomic.txt', 'original');
 

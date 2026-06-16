@@ -1,3 +1,9 @@
+/**
+ * 认证路由集成测试
+ *
+ * 通过 Fastify inject 模拟 HTTP 请求，测试 /auth/register 和 /auth/login
+ * 两个端点的完整请求-响应流程，包括参数校验和错误响应。
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-testing';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -20,6 +26,8 @@ describe('Auth Routes', () => {
   afterEach(async () => {
     await teardownApp(app);
   });
+
+  // ── 注册端点 ──
 
   describe('POST /auth/register', () => {
     it('200 - 注册成功返回 token 和 user', async () => {
@@ -79,6 +87,8 @@ describe('Auth Routes', () => {
       expect(body.message).toBeDefined();
     });
   });
+
+  // ── 登录端点 ──
 
   describe('POST /auth/login', () => {
     beforeEach(async () => {

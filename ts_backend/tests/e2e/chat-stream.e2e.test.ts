@@ -1,3 +1,10 @@
+/**
+ * Chat SSE 流式对话端到端测试
+ *
+ * 测试 /chat/completions 端点的流式和非流式响应，
+ * 以及 /models 模型列表端点。AI 客户端通过 vi.mock 模拟，
+ * 不依赖真实 DeepSeek API。
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-e2e';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -9,6 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildE2EApp, teardownE2EApp, registerAndLogin } from './helpers.js';
 
+// 模拟 AI 客户端，避免调用真实 DeepSeek API
 vi.mock('../../src/core/ai/client.js', () => ({
   getOrCreateClient: vi.fn(),
   getUserApiKey: vi.fn().mockResolvedValue('sk-test-mock-key'),
@@ -28,6 +36,8 @@ vi.mock('../../src/core/ai/client.js', () => ({
     },
   }),
 }));
+
+// ── SSE 流式对话 ──
 
 describe('Chat - SSE 流式对话', () => {
   let app: FastifyInstance;
@@ -59,6 +69,7 @@ describe('Chat - SSE 流式对话', () => {
     expect(response.statusCode).toBe(200);
   });
 
+  // 非流式模式：mock AI 客户端返回完整响应，验证 JSON 格式
   it('POST /completions stream=false 返回 JSON 响应', async () => {
     const { getOrCreateClient } = await import('../../src/core/ai/client.js');
     const mockCreate = vi.fn().mockResolvedValue({
@@ -112,6 +123,7 @@ describe('Chat - SSE 流式对话', () => {
     expect(response.statusCode).toBe(400);
   });
 
+  // 单用户模式下未认证请求不会返回 401，而是自动登录
   it('POST /chat/completions 未认证返回 401', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -126,6 +138,8 @@ describe('Chat - SSE 流式对话', () => {
     expect(response.statusCode).toBe(200);
   });
 });
+
+// ── 模型列表 ──
 
 describe('Chat - 模型列表', () => {
   let app: FastifyInstance;
@@ -168,6 +182,7 @@ describe('Chat - 模型列表', () => {
     expect(Array.isArray(body.models)).toBe(true);
   });
 
+  // 单用户模式下未认证请求自动登录，不会返回 401
   it('GET /models 未认证返回 401', async () => {
     const response = await app.inject({
       method: 'GET',

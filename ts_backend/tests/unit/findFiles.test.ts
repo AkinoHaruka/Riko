@@ -1,3 +1,7 @@
+/**
+ * FindFiles 工具单元测试
+ * 测试 glob 模式匹配、递归搜索、分页及路径校验等文件查找功能
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 import os from 'os';
@@ -53,6 +57,7 @@ describe('FindFiles 工具', () => {
     expect(names).not.toContain('tutorial.txt');
   });
 
+  // 验证分页参数 limit 和 offset 的配合使用
   it('分页 - limit 和 offset 配合使用', () => {
     // 创建 10 个文件
     for (let i = 0; i < 10; i++) {

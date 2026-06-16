@@ -1,5 +1,10 @@
+/**
+ * Frontmatter 解析器单元测试
+ * 测试 YAML frontmatter 的解析、类型转换、注释跳过及记忆类型校验
+ */
 import { describe, it, expect } from 'vitest';
-import { parseFrontmatter, parseMemoryType } from '../../src/core/validation/frontmatter.js';
+import { parseFrontmatter } from '../../src/core/validation/frontmatter.js';
+import { parseMemoryType } from '../../src/memoryStorage/types.js';
 
 describe('Frontmatter 解析器', () => {
   it('应正确解析标准 frontmatter', () => {
@@ -28,7 +33,8 @@ describe('Frontmatter 解析器', () => {
     const md = '---\ncount: 42\nratio: 3.14\n---\n';
     const result = parseFrontmatter(md);
     expect(result.frontmatter.count).toBe(42);
-    expect(result.frontmatter.ratio).toBe(3.14);
+    // 浮点数字符串不再自动转为数字，保留为字符串以避免版本号等误转
+    expect(result.frontmatter.ratio).toBe('3.14');
   });
 
   it('应正确解析带引号的值', () => {

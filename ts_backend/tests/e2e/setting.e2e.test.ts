@@ -1,3 +1,11 @@
+/**
+ * 设置端到端测试
+ *
+ * 测试 /settings 端点的完整 CRUD 流程，包括：
+ * - 普通设置的保存、查询、按 key 查询、删除
+ * - API Key 的加密存储、解密读取和空字符串清除
+ * - 不存在的设置返回 404
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-e2e';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -85,6 +93,7 @@ describe('Setting E2E', () => {
     expect(body.value).toBe('zh-CN');
   });
 
+  // 删除设置后再次查询应返回 404
   it('删除设置', async () => {
     await app.inject({
       method: 'POST',
@@ -111,6 +120,7 @@ describe('Setting E2E', () => {
     expect(getRes.statusCode).toBe(404);
   });
 
+  // API Key 在数据库中加密存储，读取时自动解密返回明文
   it('保存 API Key（加密存储）', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -143,6 +153,7 @@ describe('Setting E2E', () => {
     expect(body.api_key).toBe('sk-test-key-abcde');
   });
 
+  // 传入空字符串表示清除 API Key
   it('清除 API Key', async () => {
     await app.inject({
       method: 'POST',

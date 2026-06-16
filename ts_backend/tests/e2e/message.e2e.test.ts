@@ -1,3 +1,12 @@
+/**
+ * 消息端到端测试
+ *
+ * 测试 /messages 端点的完整 CRUD 流程，包括：
+ * - 创建消息、获取会话消息列表
+ * - 更新消息内容、删除单条消息、按会话批量删除
+ * - 消息按创建时间排序验证
+ * - 不存在的消息返回 404
+ */
 process.env.JWT_SECRET = 'test-secret-key-for-e2e';
 process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef';
 process.env.DB_PATH = ':memory:';
@@ -9,6 +18,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildE2EApp, teardownE2EApp, registerAndLogin } from './helpers.js';
 
+/**
+ * 创建测试会话，返回包含 id 的对象
+ * @param app - Fastify 应用实例
+ * @param token - 认证 token
+ * @param title - 会话标题，默认 '测试会话'
+ */
 async function createConversation(app: FastifyInstance, token: string, title = '测试会话') {
   const res = await app.inject({
     method: 'POST',
@@ -144,6 +159,7 @@ describe('Message E2E', () => {
     expect(body.deleted_count).toBe(3);
   });
 
+  // 验证消息按创建时间升序排列（先创建的在前）
   it('消息按创建时间排序', async () => {
     await app.inject({
       method: 'POST',

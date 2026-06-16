@@ -1,3 +1,7 @@
+/**
+ * 数据库连接层单元测试
+ * 验证各数据表的创建、字段完整性、外键约束及 WAL 模式等基础配置
+ */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Database from 'better-sqlite3';
 import fs from 'fs';

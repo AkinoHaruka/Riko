@@ -1,3 +1,7 @@
+/**
+ * AES 加密模块单元测试
+ * 测试 AES-256-GCM 加密/解密、随机 IV、中文支持、空字符串处理及旧格式 CBC 回退兼容
+ */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import crypto from 'crypto';
 import { encrypt, decrypt } from '../../src/core/encryption/aes.js';
@@ -26,6 +30,7 @@ describe('AES-256-GCM 加密模块 (CBC 回退兼容)', () => {
     expect(decrypted).toBe(plaintext);
   });
 
+  // 随机 IV 确保相同明文产生不同密文，防止密文模式分析
   it('每次加密应产生不同的密文（随机 IV）', () => {
     const plaintext = 'same text';
     const encrypted1 = encrypt(plaintext);
@@ -54,6 +59,7 @@ describe('AES-256-GCM 加密模块 (CBC 回退兼容)', () => {
     expect(decrypted).toBe(plaintext);
   });
 
+  // 兼容旧版全零 IV 的 CBC 加密格式，确保数据迁移后仍可解密
   it('应兼容全零 IV 的旧格式', () => {
     // 手动构造全零 IV 的旧格式密文，验证 decrypt 的回退逻辑
     const keyBytes = Buffer.from(TEST_KEY, 'utf-8');

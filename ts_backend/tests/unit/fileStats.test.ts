@@ -1,8 +1,13 @@
+/**
+ * FileStats 工具单元测试
+ * 测试文件元数据查询、大小格式化及路径不存在等异常场景
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { executeStat, formatFileSize } from '../../src/tools/fileStats/fileStats.js';
+import { executeStat } from '../../src/tools/fileStats/fileStats.js';
+import { formatFileSize } from '../../src/tools/shared/formatFileSize.js';
 import { PATH_NOT_FOUND } from '../../src/tools/types.js';
 
 // Mock resolveVirtualPath，使其返回测试临时目录作为 physicalRoot
@@ -29,6 +34,7 @@ describe('FileStats 工具', () => {
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
+  // 测试文件元数据查询
   describe('查询文件元数据', () => {
     it('应返回文件的完整元数据信息', () => {
       const content = 'hello world';
@@ -66,6 +72,7 @@ describe('FileStats 工具', () => {
     });
   });
 
+  // 测试文件大小的人类可读格式化
   describe('大小格式化 formatFileSize', () => {
     it('应正确格式化字节', () => {
       expect(formatFileSize(500)).toBe('500B');

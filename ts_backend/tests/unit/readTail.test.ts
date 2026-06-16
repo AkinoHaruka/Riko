@@ -1,12 +1,16 @@
+/**
+ * ReadTail 工具单元测试
+ * 测试文件尾部读取：后 N 行读取、行号格式化及错误处理
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import {
   executeTail,
-  formatLinesWithNumbers,
   readFileTailFast,
 } from '../../src/tools/readTail/readTail.js';
+import { formatLinesWithNumbers } from '../../src/tools/shared/formatLines.js';
 import { FILE_NOT_FOUND } from '../../src/tools/types.js';
 
 const { tmpDir } = vi.hoisted(() => {
@@ -17,22 +21,23 @@ const { tmpDir } = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../src/config/auto_dream.js', () => ({
-  autoDreamConfig: {
-    memoryRootDir: tmpDir,
-    systemPromptsDir: tmpDir,
-  },
-}));
+import { setupVirtualPathMapping } from '../../src/core/validation/path.js';
 
 describe('ReadTail 工具', () => {
   beforeEach(() => {
     fs.mkdirSync(tmpDir, { recursive: true });
+    setupVirtualPathMapping({
+      memoryRootDir: tmpDir,
+      systemPromptsDir: tmpDir,
+      promptDir: tmpDir,
+    });
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // 测试读取文件后 N 行
   describe('读取后N行', () => {
     it('应读取文件的最后5行并返回正确内容和行号', () => {
       const lines = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`);
@@ -74,6 +79,7 @@ describe('ReadTail 工具', () => {
     });
   });
 
+  // 测试行号格式化，确保从正确的起始行号开始
   describe('行号格式化', () => {
     it('行号应右对齐并用 → 分隔，从正确的起始行号开始', () => {
       const lines = ['x', 'y', 'z'];

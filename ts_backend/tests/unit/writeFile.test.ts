@@ -1,3 +1,7 @@
+/**
+ * WriteFile 工具单元测试
+ * 测试文件写入操作：新建文件、更新文件、内容大小校验、路径安全校验及行数计算
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
@@ -62,6 +66,7 @@ describe('WriteFile 工具', () => {
     expect(readFile('new-file.txt')).toBe('hello world');
   });
 
+  // 更新已有文件时返回 diff 信息
   it('更新已有文件', () => {
     createFile('existing.txt', 'old content');
 
@@ -74,7 +79,7 @@ describe('WriteFile 工具', () => {
     if (result.success) {
       expect(result.type).toBe('update');
       expect(result.diff).toBeTruthy();
-      expect(result.old_content).toBe('old content');
+      // old_content 已从返回值中移除，不再暴露文件被覆盖前的完整内容
     }
     expect(readFile('existing.txt')).toBe('new content');
   });
@@ -109,6 +114,7 @@ describe('WriteFile 工具', () => {
     }
   });
 
+  // 已有文件超过大小限制时拒绝写入
   it('文件大小校验', () => {
     // 创建一个超过 MAX_FILE_SIZE 的已有文件
     const largeFilePath = path.join(root, 'large-existing.txt');
@@ -174,6 +180,7 @@ describe('WriteFile 工具', () => {
     }
   });
 
+  // 末尾换行不计入额外行数
   it('lines_written计算 - 末尾换行不计入额外行', () => {
     const result = executeWrite({
       file_path: 'lines-trailing.txt',

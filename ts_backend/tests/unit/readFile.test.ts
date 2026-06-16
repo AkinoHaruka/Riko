@@ -1,3 +1,7 @@
+/**
+ * ReadFile 工具单元测试
+ * 测试文件内容读取：行号格式化、范围读取、frontmatter 解析、新鲜度提醒及错误处理
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'path';
 import os from 'os';
@@ -12,13 +16,8 @@ const { tmpDir } = vi.hoisted(() => {
   };
 });
 
-// 模拟 autoDreamConfig，使 resolveVirtualPath 使用我们的临时目录
-vi.mock('../../src/config/auto_dream.js', () => ({
-  autoDreamConfig: {
-    memoryRootDir: tmpDir,
-    systemPromptsDir: tmpDir,
-  },
-}));
+// 配置虚拟路径映射，使 resolveVirtualPath 使用我们的临时目录
+import { setupVirtualPathMapping } from '../../src/core/validation/path.js';
 
 import { executeCat, readFileInRange, memoryFreshnessNote } from '../../src/tools/readFile/readFile.js';
 import { FILE_NOT_FOUND, IS_DIRECTORY } from '../../src/tools/types.js';
@@ -26,6 +25,11 @@ import { FILE_NOT_FOUND, IS_DIRECTORY } from '../../src/tools/types.js';
 describe('ReadFile 工具', () => {
   beforeEach(() => {
     fs.mkdirSync(tmpDir, { recursive: true });
+    setupVirtualPathMapping({
+      memoryRootDir: tmpDir,
+      systemPromptsDir: tmpDir,
+      promptDir: tmpDir,
+    });
   });
 
   afterEach(() => {
@@ -80,6 +84,7 @@ describe('ReadFile 工具', () => {
     expect(result.frontmatter.tags).toBe('demo');
   });
 
+  // 文件较旧时提示用户数据可能过时
   it('新鲜度提醒 - 文件修改时间较旧时包含提示', () => {
     const filePath = path.join(tmpDir, 'old.txt');
     fs.writeFileSync(filePath, 'old content');
@@ -115,6 +120,7 @@ describe('ReadFile 工具', () => {
   });
 });
 
+// 测试纯函数：行号格式化与范围截取
 describe('readFileInRange 纯函数', () => {
   it('应正确格式化行号并截取指定范围', () => {
     const text = 'aaa\nbbb\nccc\nddd\neee';
@@ -141,6 +147,7 @@ describe('readFileInRange 纯函数', () => {
   });
 });
 
+// 测试纯函数：新鲜度提醒生成
 describe('memoryFreshnessNote 纯函数', () => {
   it('当天修改的文件不返回提醒', () => {
     const note = memoryFreshnessNote(Date.now());

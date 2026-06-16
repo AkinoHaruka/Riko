@@ -1,3 +1,7 @@
+/**
+ * AI API 错误映射单元测试
+ * 测试 mapApiError 函数：将 OpenAI 风格的 HTTP 错误映射为用户友好的中文错误消息
+ */
 import { describe, it, expect } from 'vitest';
 import { mapApiError } from '../../../src/core/ai/errors.js';
 
@@ -55,7 +59,7 @@ describe('mapApiError', () => {
   it('未知状态码 → 返回原始状态码和默认消息', () => {
     const result = mapApiError(makeOpenAiError(418, 'I am a teapot'));
     expect(result.statusCode).toBe(418);
-    expect(result.message).toContain('I am a teapot');
+    expect(result.message).toBe('AI API 调用失败，请稍后重试');
   });
 
   it('非对象错误 → 返回 500 和默认消息', () => {
