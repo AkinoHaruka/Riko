@@ -49,6 +49,7 @@ ${RESIDENT_MEMORY_CONTENT}
 - `interaction_rules/` — 互动规则
 - `key_experiences/` — 重要经历
 - `promises_goals/` — 约定与目标
+- `emotions/` — 情感与关系
 
 请根据记忆的 type 字段将文件写入正确的子目录（如 `traits_roles/role_persona.md`）。请遵循记忆文件格式约定：
 
@@ -67,6 +68,7 @@ type: {{traits_roles|interaction_rules|key_experiences|promises_goals}}
 - **interaction_rules**：互动规则 — '我们如何对待彼此'：沟通风格、行为边界、反馈偏好
 - **key_experiences**：重要经历 — '经历了什么，有什么暗号'：关键事件、里程碑、共享暗号
 - **promises_goals**：约定与目标 — '我们要走向哪里'：共同承诺、长期目标、待办约定
+- **emotions**：情感与关系 — '你感觉怎样，我们怎样'：情感状态、关系阶段、情感触发词、情绪偏好
 
 重点关注：
 - 只创建 `.md` 文件——不要创建 `.gitkeep`、`README`、`.gitignore` 等占位文件
@@ -85,6 +87,9 @@ type: {{traits_roles|interaction_rules|key_experiences|promises_goals}}
 - 用户明确要求的**与你互动的方式**（用中文回复、不要用 emoji 等）
 - 用户提及的**关键事件**（功能上线、bug 修复、重要决策）
 - 用户与你之间的**约定和承诺**（TODO 项、下次对话要跟进的事）
+- 用户在对话中展现的**情感状态**（焦虑、开心、孤独、挫败——注意：只记录反复出现的情感模式，不记录一次性情绪波动）
+- 用户与你之间的**关系变化**（从试探到信任、从客气到随意）
+- 用户对特定话题的**情感反应**（提到某事明显变开心/变沉默/变急躁）
 
 ## 第四阶段 — 修剪与索引（长期记忆）
 
@@ -108,7 +113,8 @@ type: {{traits_roles|interaction_rules|key_experiences|promises_goals}}
 - **精简至上**：总量控制在 ~1000 字（约 4000 token）以内。宁可遗漏也不冗余
 - **增量更新**：保留仍然有效的旧信息，修正过时内容，融入关键新信息
 - **只记连续性关键信息**：当前身份/角色、进行中的项目/任务、最近关键决策、活跃约定与目标、重要的用户偏好变化
-- **不记**：已完成的琐事、过时的技术细节、可通过检索长期记忆获取的内容
+- **情感要点**：如果近期对话中用户展现了明显的情感模式（如持续焦虑、明显开心），在常驻记忆中用一两句话标注——这直接影响你在下次对话中的语气和回应方式
+- **不记**：已完成的琐事、过时的技术细节、可通过检索长期记忆获取的内容、一次性情绪波动
 - **自由格式**：无需固定模板，用最自然的方式组织信息
 - 如果常驻记忆已经很完善且无需更新，可以不做修改
 
@@ -139,6 +145,7 @@ type: {{traits_roles|interaction_rules|key_experiences|promises_goals}}
 - **interaction_rules**：沟通风格、行为边界、反馈偏好
 - **key_experiences**：关键事件、里程碑、共享暗号
 - **promises_goals**：共同承诺、长期目标、待办约定
+- **emotions**：情感状态模式、关系阶段变化、情感触发词、情绪偏好
 
 ## 两种记忆的区别
 - **长期记忆**（分类目录 + INDEX.md）：完整档案，越详细越好。不注入对话
