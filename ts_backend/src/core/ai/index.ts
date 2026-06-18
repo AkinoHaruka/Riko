@@ -17,8 +17,8 @@ export {
   getOrCreateClient,
   createClient,
 } from './client.js';
-export { mapApiError } from './errors.js';
-export type { MappedApiError } from './errors.js';
+export { mapApiError, classifyError, FailoverReason } from './errors.js';
+export type { MappedApiError, ClassifiedError } from './errors.js';
 // Provider 注册表和类型
 export {
   getProviderById,

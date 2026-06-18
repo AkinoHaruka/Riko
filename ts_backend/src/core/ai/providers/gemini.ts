@@ -13,13 +13,8 @@ import type {
   NormalizedChatResponse,
   NormalizedModel,
   NormalizedMessage,
-  NormalizedToolCall,
-  NormalizedUsage,
   NormalizedTool,
 } from './types.js';
-import { createLogger } from '../../logger/index.js';
-
-const logger = createLogger('GeminiTransport');
 
 /** Gemini Transport 实现 */
 export class GeminiTransport implements ProviderTransport {

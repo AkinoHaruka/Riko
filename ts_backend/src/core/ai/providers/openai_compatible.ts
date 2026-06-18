@@ -19,7 +19,6 @@ import type {
   NormalizedChatResponse,
   NormalizedModel,
   NormalizedMessage,
-  NormalizedToolCall,
   NormalizedUsage,
   NormalizedTool,
 } from './types.js';

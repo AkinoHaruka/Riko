@@ -15,7 +15,6 @@
 import type {
   ProviderDefinition,
   ProviderTransport,
-  ApiMode,
 } from './providers/index.js';
 import {
   findProviderByModelId,
