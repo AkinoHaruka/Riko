@@ -2,21 +2,27 @@
 ///
 /// 支持多行文本输入、Enter 发送 / Shift+Enter 换行、发送按钮（有文本时绿色）/ 加号按钮（空文本时展开参数面板）。
 /// 参数面板包含 Temperature 和 Max Tokens 滑块调节。
+/// 通过 [inputBarStateProvider] 将焦点、文本长度、加载状态暴露给 DynamicIsland，避免深层传参。
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../../core/di/input_bar_state_provider.dart';
 import '../../core/theme/app_animations.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_glass.dart';
 import '../../core/theme/app_radius.dart';
+import '../../core/theme/app_shadows.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_spring.dart';
 import '../../core/theme/app_typography.dart';
 
 /// 现代输入栏 — 多行文本输入、发送按钮、Temperature/Max Tokens 调节面板
 ///
 /// 有文本时显示绿色发送按钮，空文本时显示圆形加号按钮以展开参数选项面板。
-class ModernInputBar extends StatefulWidget {
+class ModernInputBar extends ConsumerStatefulWidget {
   final TextEditingController controller;
   final bool isLoading;
   final VoidCallback onSend;
@@ -39,39 +45,67 @@ class ModernInputBar extends StatefulWidget {
   });
 
   @override
-  State<ModernInputBar> createState() => _ModernInputBarState();
+  ConsumerState<ModernInputBar> createState() => _ModernInputBarState();
 }
 
-class _ModernInputBarState extends State<ModernInputBar> {
+class _ModernInputBarState extends ConsumerState<ModernInputBar> {
   bool _showOptions = false;
   bool _hasText = false;
+  late final FocusNode _focusNode;
 
   @override
   void initState() {
     super.initState();
+    _focusNode = FocusNode();
+    _focusNode.addListener(_onFocusChanged);
     widget.controller.addListener(_onTextChanged);
   }
 
   @override
+  void didUpdateWidget(covariant ModernInputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isLoading != oldWidget.isLoading) {
+      ref.read(inputBarStateProvider.notifier).setLoading(widget.isLoading);
+      // 进入加载态表示消息已发出，正处于等待回复阶段；结束时清除等待标记
+      ref
+          .read(inputBarStateProvider.notifier)
+          .setWaitingReply(widget.isLoading);
+    }
+  }
+
+  @override
   void dispose() {
+    _focusNode.removeListener(_onFocusChanged);
+    _focusNode.dispose();
     widget.controller.removeListener(_onTextChanged);
     super.dispose();
   }
 
+  /// 焦点变化时同步到 Provider，触发 Island 脉动
+  void _onFocusChanged() {
+    ref.read(inputBarStateProvider.notifier).setFocused(_focusNode.hasFocus);
+  }
+
+  /// 文本变化时同步长度到 Provider，并更新本地发送按钮状态
   void _onTextChanged() {
-    final hasText = widget.controller.text.trim().isNotEmpty;
+    final text = widget.controller.text;
+    final hasText = text.trim().isNotEmpty;
+    ref.read(inputBarStateProvider.notifier).setTextLength(text.length);
     if (hasText != _hasText) {
       setState(() => _hasText = hasText);
     }
   }
 
+  /// 发送后清空输入，等待 ChatNotifier 设置 isLoading 后由 didUpdateWidget 同步等待状态
+  void _handleSend() {
+    if (!widget.isLoading && widget.controller.text.trim().isNotEmpty) {
+      widget.onSend();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.bgTertiary,
-        border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
-      ),
+    return AppGlass.inputBar(
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -79,10 +113,12 @@ class _ModernInputBarState extends State<ModernInputBar> {
             mainAxisSize: MainAxisSize.min,
             children: [
               AnimatedSize(
-                duration: AppAnimations.page,
-                curve: AppAnimations.easeOutBack,
+                duration: AppAnimations.duration(context, AppAnimations.page),
+                curve: AppAnimations.curve(context, AppSprings.bouncyCurve),
                 alignment: Alignment.topCenter,
-                child: _showOptions ? _buildOptionsPanel() : const SizedBox.shrink(),
+                child: _showOptions
+                    ? _buildOptionsPanel()
+                    : const SizedBox.shrink(),
               ),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -93,7 +129,7 @@ class _ModernInputBarState extends State<ModernInputBar> {
                         const SingleActivator(LogicalKeyboardKey.enter): () {
                           if (!widget.isLoading &&
                               widget.controller.text.trim().isNotEmpty) {
-                            widget.onSend();
+                            _handleSend();
                           }
                         },
                         const SingleActivator(
@@ -117,6 +153,7 @@ class _ModernInputBarState extends State<ModernInputBar> {
                       },
                       child: TextField(
                         controller: widget.controller,
+                        focusNode: _focusNode,
                         enabled: !widget.isLoading,
                         minLines: 1,
                         maxLines: 6,
@@ -128,32 +165,40 @@ class _ModernInputBarState extends State<ModernInputBar> {
                         onSubmitted: (_) {
                           if (!widget.isLoading &&
                               widget.controller.text.trim().isNotEmpty) {
-                            widget.onSend();
+                            _handleSend();
                           }
                         },
                         cursorColor: AppColors.green,
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: AppTypography.bodyLg,
                         ),
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.bgElevated,
+                          hintText: '输入消息，Shift+Enter 换行',
+                          hintStyle: const TextStyle(
+                            color: AppColors.textTertiary,
+                            fontSize: AppTypography.bodyLg,
+                          ),
                           border: OutlineInputBorder(
-                            borderRadius: AppRadius.smAll,
+                            borderRadius: AppRadius.mdAll,
                             borderSide: BorderSide.none,
                           ),
                           focusedBorder: OutlineInputBorder(
-                            borderRadius: AppRadius.smAll,
-                            borderSide: BorderSide.none,
+                            borderRadius: AppRadius.mdAll,
+                            borderSide: BorderSide(
+                              color: AppColors.green.withValues(alpha: 0.5),
+                              width: 1.5,
+                            ),
                           ),
                           enabledBorder: OutlineInputBorder(
-                            borderRadius: AppRadius.smAll,
+                            borderRadius: AppRadius.mdAll,
                             borderSide: BorderSide.none,
                           ),
                           contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
+                            horizontal: 14,
+                            vertical: 12,
                           ),
                         ),
                       ),
@@ -162,29 +207,76 @@ class _ModernInputBarState extends State<ModernInputBar> {
                   const SizedBox(width: 10),
                   // 有文本时显示绿色发送按钮，否则显示圆形加号按钮
                   AnimatedSwitcher(
-                    duration: AppAnimations.quick,
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: AppAnimations.easeInOut,
+                    duration: AppAnimations.duration(
+                      context,
+                      AppAnimations.normal,
+                    ),
+                    switchInCurve: AppAnimations.curve(
+                      context,
+                      AppSprings.bouncyCurve,
+                    ),
+                    switchOutCurve: AppAnimations.curve(
+                      context,
+                      AppAnimations.easeIn,
+                    ),
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: ScaleTransition(
+                        scale: animation.drive(
+                          Tween(
+                            begin: 0.5,
+                            end: 1.0,
+                          ).chain(CurveTween(curve: AppSprings.bouncyCurve)),
+                        ),
+                        child: child,
+                      ),
+                    ),
                     child: _hasText
-                        ? AppAnimations.scaleTap(
-                            onTap: widget.isLoading
-                                ? () {}
-                                : () => widget.onSend(),
-                            child: Container(
+                        ? Semantics(
+                            label: widget.isLoading ? '发送中' : '发送消息',
+                            button: true,
+                            child: SpringScaleTap(
                               key: const ValueKey('send'),
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: widget.isLoading
-                                    ? AppColors.green.withAlpha(120)
-                                    : AppColors.green,
-                              ),
-                              child: const Center(
-                                child: Icon(
-                                  Icons.arrow_upward,
-                                  color: Colors.white,
-                                  size: 20,
+                              onTap: widget.isLoading ? () {} : _handleSend,
+                              scaleDown: 0.85,
+                              spring: AppSprings.bouncyHeavy,
+                              child: AnimatedContainer(
+                                duration: AppAnimations.duration(
+                                  context,
+                                  AppAnimations.quick,
+                                ),
+                                curve: AppAnimations.curve(
+                                  context,
+                                  AppAnimations.easeOut,
+                                ),
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: LinearGradient(
+                                    colors: widget.isLoading
+                                        ? [
+                                            AppColors.green.withAlpha(120),
+                                            AppColors.greenDark.withAlpha(120),
+                                          ]
+                                        : [
+                                            AppColors.greenLight,
+                                            AppColors.green,
+                                          ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  boxShadow: AppShadows.button(
+                                    AppColors.green,
+                                    pressed: false,
+                                  ),
+                                ),
+                                child: const Center(
+                                  child: Icon(
+                                    Icons.arrow_upward,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
                                 ),
                               ),
                             ),
@@ -233,9 +325,11 @@ class _ModernInputBarState extends State<ModernInputBar> {
     Widget? customWidget,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
+    return SpringScaleTap(
       key: key,
       onTap: onTap,
+      scaleDown: 0.88,
+      spring: AppSprings.bouncy,
       child: Container(
         width: 40,
         height: 40,
@@ -254,34 +348,45 @@ class _ModernInputBarState extends State<ModernInputBar> {
     );
   }
 
-  /// 参数选项面板 — Temperature 和 Max Tokens 滑块
+  /// 参数选项面板 — Temperature 和 Max Tokens 滑块，浮起卡片式
   Widget _buildOptionsPanel() {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(AppSpacing.mdSm),
       decoration: BoxDecoration(
         color: AppColors.bgElevated,
-        borderRadius: AppRadius.mdAll,
+        borderRadius: AppRadius.lgAll,
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.06),
+          width: 0.5,
+        ),
+        boxShadow: AppShadows.card,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (widget.onSystemMessage != null)
-            ListTile(
-              dense: true,
-              leading: const Icon(
-                Icons.settings_applications,
-                color: AppColors.textSecondary,
-                size: 20,
-              ),
-              title: const Text(
-                '发送系统消息',
-                style: TextStyle(color: AppColors.textPrimary, fontSize: AppTypography.body),
-              ),
+            SpringScaleTap(
+              scaleDown: 0.97,
               onTap: () {
                 setState(() => _showOptions = false);
                 widget.onSystemMessage!();
               },
+              child: const ListTile(
+                dense: true,
+                leading: Icon(
+                  Icons.settings_applications,
+                  color: AppColors.textSecondary,
+                  size: 20,
+                ),
+                title: Text(
+                  '发送系统消息',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: AppTypography.body,
+                  ),
+                ),
+              ),
             ),
           if (widget.onTemperatureChanged != null) ...[
             _buildSlider(
@@ -294,7 +399,11 @@ class _ModernInputBarState extends State<ModernInputBar> {
             ),
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Divider(height: 1, thickness: 0.5, color: AppColors.borderLight),
+              child: Divider(
+                height: 1,
+                thickness: 0.5,
+                color: AppColors.borderLight,
+              ),
             ),
           ],
           if (widget.onMaxTokensChanged != null)

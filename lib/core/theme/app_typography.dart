@@ -80,7 +80,7 @@ class AppTypography {
   // ===== 语义化 TextStyle =====
 
   /// 页面主标题
-  static TextStyle get displayStyle => TextStyle(
+  static TextStyle get displayStyle => const TextStyle(
         fontSize: display,
         fontWeight: bold,
         height: lineHeightTight,
@@ -89,7 +89,7 @@ class AppTypography {
       );
 
   /// 区块标题
-  static TextStyle get headlineStyle => TextStyle(
+  static TextStyle get headlineStyle => const TextStyle(
         fontSize: headline,
         fontWeight: semibold,
         height: lineHeightTight,
@@ -98,7 +98,7 @@ class AppTypography {
       );
 
   /// 卡片/设置组标题
-  static TextStyle get titleStyle => TextStyle(
+  static TextStyle get titleStyle => const TextStyle(
         fontSize: title,
         fontWeight: semibold,
         height: lineHeightNormal,
@@ -107,7 +107,7 @@ class AppTypography {
       );
 
   /// 列表项标题
-  static TextStyle get subtitleStyle => TextStyle(
+  static TextStyle get subtitleStyle => const TextStyle(
         fontSize: subtitle,
         fontWeight: medium,
         height: lineHeightNormal,
@@ -116,7 +116,7 @@ class AppTypography {
       );
 
   /// 正文
-  static TextStyle get bodyStyle => TextStyle(
+  static TextStyle get bodyStyle => const TextStyle(
         fontSize: body,
         fontWeight: regular,
         height: lineHeightRelaxed,
@@ -125,7 +125,7 @@ class AppTypography {
       );
 
   /// 正文强调
-  static TextStyle get bodyEmphasis => TextStyle(
+  static TextStyle get bodyEmphasis => const TextStyle(
         fontSize: body,
         fontWeight: medium,
         height: lineHeightRelaxed,
@@ -134,7 +134,7 @@ class AppTypography {
       );
 
   /// 大正文
-  static TextStyle get bodyLgStyle => TextStyle(
+  static TextStyle get bodyLgStyle => const TextStyle(
         fontSize: bodyLg,
         fontWeight: regular,
         height: lineHeightNormal,
@@ -143,7 +143,7 @@ class AppTypography {
       );
 
   /// 辅助说明
-  static TextStyle get captionStyle => TextStyle(
+  static TextStyle get captionStyle => const TextStyle(
         fontSize: caption,
         fontWeight: regular,
         height: lineHeightNormal,
@@ -152,7 +152,7 @@ class AppTypography {
       );
 
   /// 极小文字
-  static TextStyle get microStyle => TextStyle(
+  static TextStyle get microStyle => const TextStyle(
         fontSize: micro,
         fontWeight: medium,
         height: lineHeightNormal,

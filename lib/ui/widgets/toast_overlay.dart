@@ -139,7 +139,7 @@ class _ToastItemState extends State<_ToastItem>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
+                const Icon(
                   Icons.check_circle_rounded,
                   color: AppColors.green,
                   size: 18,

@@ -29,7 +29,7 @@ import 'widgets/avatar/avatar_crop_page.dart';
 import 'widgets/avatar/avatar_provider.dart';
 import 'widgets/background/background_picker.dart';
 import 'widgets/draggable_splitter.dart';
-import 'widgets/dynamic_island/dynamic_island.dart';
+import 'widgets/dynamic_island/dynamic_island_overlay.dart';
 import 'widgets/terminal_panel.dart';
 
 /// 聊天页面 — 核心交互入口
@@ -51,18 +51,10 @@ class _ChatPageState extends ConsumerState<ChatPage>
   /// 上一次键盘高度，用于检测软键盘弹出/收起
   double _lastViewInsetBottom = 0;
 
-  /// ref.listen 注册标记，避免重复注册
-  bool _listenersRegistered = false;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // 延迟到首帧后注册 ref.listen，因为 initState 中 ref 尚不可用
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _registerListeners();
-    });
     Future.microtask(() async {
       // 初始化面板比例、设置缓存、代理会话
       await ref.read(panelRatioProvider.notifier).init();
@@ -96,18 +88,6 @@ class _ChatPageState extends ConsumerState<ChatPage>
             .show('梦境整理完成 (审查 $sessionsReviewed 个会话)');
       }
     }
-  }
-
-  /// 注册 ref.listen（设置变更同步、会话切换重置），仅执行一次
-  void _registerListeners() {
-    if (_listenersRegistered) return;
-    _listenersRegistered = true;
-    // 设置变更时同步更新代理参数
-    ref.listen(settingsCacheProvider, (prev, next) {
-      ref.read(chatNotifierProvider.notifier).updateAgentParams();
-    });
-    // 切换会话时无需重置滚动标记，ChatMessageList 内部管理
-    ref.listen(activeConversationIdProvider, (prev, next) {});
   }
 
   @override
@@ -246,9 +226,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
         duration: const Duration(seconds: 5),
         content: Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: AppColors.warning),
+            const Icon(Icons.warning_amber_rounded, color: AppColors.warning),
             AppSpacing.hSM,
-            Expanded(
+            const Expanded(
               child: Text(
                 'Context nearing token limit. Use /compact to compress.',
               ),
@@ -404,6 +384,10 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
   @override
   Widget build(BuildContext context) {
+    // 监听设置变更并同步更新代理参数
+    ref.listen(settingsCacheProvider, (prev, next) {
+      ref.read(chatNotifierProvider.notifier).updateAgentParams();
+    });
     // 监听当前活跃会话和代理类型
     final activeConversationId = ref.watch(activeConversationIdProvider);
     final activeAgentType = ref.watch(activeAgentTypeProvider);
@@ -540,14 +524,6 @@ class _ChatPageState extends ConsumerState<ChatPage>
       dreamProgress = (hoursSince / chatState.dreamMinHours).clamp(0.0, 1.0);
     }
 
-    final island = DynamicIsland(
-      tokenCount: chatState.tokenCount,
-      maxTokens: 1000000,
-      memoryProgress: memoryProgress,
-      compactProgress: compactProgress,
-      dreamProgress: dreamProgress,
-    );
-
     final background = ref.watch(activeConversationBackgroundProvider);
     BoxDecoration? bgBoxDecoration;
     Color? bgColor;
@@ -574,75 +550,87 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
     final scaffold = Scaffold(
       backgroundColor: bgColor ?? AppColors.bgPrimary,
-      body: SafeArea(
-        child: Column(
-          children: [
-            if (isMainAgent)
-              Padding(
-                padding: const EdgeInsets.only(top: 7),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    IconButton(
-                      icon: const FaIcon(
-                        FontAwesomeIcons.chevronLeft,
-                        color: AppColors.textPrimary,
-                        size: 20,
-                      ),
-                      onPressed: () => context.pop(),
-                    ),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: island,
-                      ),
-                    ),
-                    ChatPopupMenuButton(onSelected: _onPopupSelected),
-                  ],
-                ),
-              )
-            else
-              SizedBox(
-                height: 56,
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const FaIcon(
-                        FontAwesomeIcons.chevronLeft,
-                        color: AppColors.textPrimary,
-                        size: 20,
-                      ),
-                      onPressed: () => context.pop(),
-                    ),
-                    Expanded(
-                      child: Text(
-                        _resolveTitle(activeAgentType),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
+      // 使用 Stack 将动态岛悬浮在内容之上，不再受标题栏 Row 挤压
+      body: Stack(
+        children: [
+          SafeArea(
+            child: Column(
+              children: [
+                if (isMainAgent)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 7),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        IconButton(
+                          tooltip: '返回',
+                          icon: const FaIcon(
+                            FontAwesomeIcons.chevronLeft,
+                            color: AppColors.textPrimary,
+                            size: 20,
+                          ),
+                          onPressed: () => context.pop(),
                         ),
-                      ),
+                        // 中间区域让给悬浮动态岛，使视觉更简洁
+                        const Spacer(),
+                        ChatPopupMenuButton(onSelected: _onPopupSelected),
+                      ],
                     ),
-                    ChatPopupMenuButton(onSelected: _onPopupSelected),
-                  ],
+                  )
+                else
+                  SizedBox(
+                    height: 56,
+                    child: Row(
+                      children: [
+                        IconButton(
+                          tooltip: '返回',
+                          icon: const FaIcon(
+                            FontAwesomeIcons.chevronLeft,
+                            color: AppColors.textPrimary,
+                            size: 20,
+                          ),
+                          onPressed: () => context.pop(),
+                        ),
+                        Expanded(
+                          child: Text(
+                            _resolveTitle(activeAgentType),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        ChatPopupMenuButton(onSelected: _onPopupSelected),
+                      ],
+                    ),
+                  ),
+                Expanded(
+                  child: ChatColumn(
+                    chatState: chatState,
+                    messagesAsync: messagesAsync,
+                    activeConversationId: activeConversationId,
+                    isMainAgent: isMainAgent,
+                    isSearchVisible: _isSearchVisible,
+                    onCloseSearch: () => setState(() => _isSearchVisible = false),
+                    onSendMessage: _sendMessage,
+                    scrollToBottomRequest: _scrollToBottomRequest,
+                  ),
                 ),
-              ),
-            Expanded(
-              child: ChatColumn(
-                chatState: chatState,
-                messagesAsync: messagesAsync,
-                activeConversationId: activeConversationId,
-                isMainAgent: isMainAgent,
-                isSearchVisible: _isSearchVisible,
-                onCloseSearch: () => setState(() => _isSearchVisible = false),
-                onSendMessage: _sendMessage,
-                scrollToBottomRequest: _scrollToBottomRequest,
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
+          // 主代理模式下，动态岛悬浮在最顶层，覆盖在标题栏与消息列表之上
+          if (isMainAgent)
+            DynamicIslandOverlay(
+              tokenCount: chatState.tokenCount,
+              maxTokens: 1000000,
+              memoryProgress: memoryProgress,
+              compactProgress: compactProgress,
+              dreamProgress: dreamProgress,
+            ),
+        ],
       ),
     );
     if (bgBoxDecoration != null) {

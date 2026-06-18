@@ -26,12 +26,16 @@ class ChatPopupMenuButton extends ConsumerWidget {
     final hasAvatar = ref.watch(mainAgentAvatarProvider).valueOrNull != null;
     return AppAnimations.scaleTap(
       onTap: () => _showSpringMenu(context, hasAvatar),
-      child: const Padding(
-        padding: EdgeInsets.all(8.0),
-        child: FaIcon(
-          FontAwesomeIcons.ellipsis,
-          color: AppColors.textPrimary,
-          size: 18,
+      child: Semantics(
+        label: '更多选项',
+        button: true,
+        child: const Padding(
+          padding: EdgeInsets.all(8.0),
+          child: FaIcon(
+            FontAwesomeIcons.ellipsis,
+            color: AppColors.textPrimary,
+            size: 18,
+          ),
         ),
       ),
     );
@@ -44,13 +48,15 @@ class ChatPopupMenuButton extends ConsumerWidget {
     final renderBox = context.findRenderObject() as RenderBox;
     final size = renderBox.size;
     final offset = renderBox.localToGlobal(Offset.zero);
+    final disable = AppAnimations.disableAnimationsOf(context);
 
     showGeneralDialog(
       context: context,
       barrierDismissible: true,
       barrierColor: Colors.transparent,
-      transitionDuration: AppAnimations.normal,
+      transitionDuration: disable ? Duration.zero : AppAnimations.normal,
       transitionBuilder: (context, animation, secondaryAnimation, child) {
+        if (disable) return child;
         final scaleAnim = Tween(begin: 0.85, end: 1.0).chain(
           CurveTween(curve: AppAnimations.spring),
         );

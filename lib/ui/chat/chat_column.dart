@@ -66,8 +66,8 @@ class _ChatColumnState extends ConsumerState<ChatColumn> {
       children: [
         // 错误提示栏
         AnimatedSize(
-          duration: AppAnimations.page,
-          curve: AppAnimations.easeOutBack,
+          duration: AppAnimations.duration(context, AppAnimations.page),
+          curve: AppAnimations.curve(context, AppAnimations.easeOutBack),
           alignment: Alignment.topCenter,
           child: widget.chatState.error != null
               ? Container(
@@ -107,8 +107,8 @@ class _ChatColumnState extends ConsumerState<ChatColumn> {
         ),
         // 搜索栏
         AnimatedSize(
-          duration: AppAnimations.page,
-          curve: AppAnimations.easeOutBack,
+          duration: AppAnimations.duration(context, AppAnimations.page),
+          curve: AppAnimations.curve(context, AppAnimations.easeOutBack),
           alignment: Alignment.topCenter,
           child: widget.isSearchVisible
               ? ChatSearchBar(

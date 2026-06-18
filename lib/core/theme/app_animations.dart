@@ -10,6 +10,7 @@ import 'app_haptics.dart';
 /// - 列表 stagger：间隔 40–60ms，整体呈波浪感
 /// - 避免 Curves.linear，除非有特殊需求
 /// - 优先使用 ImplicitlyAnimatedWidget / AnimatedBuilder，避免动画中频繁 setState
+/// - 统一响应系统 [MediaQueryData.disableAnimations] 设置，减少或禁用动画
 class AppAnimations {
   AppAnimations._();
 
@@ -86,6 +87,26 @@ class AppAnimations {
   static const Curve decelerate = Cubic(0, 0.8, 0.2, 1);
 
   // ============================================================
+  // 无障碍：动画减少/禁用感知
+  // ============================================================
+
+  /// 当前是否应禁用动画
+  static bool disableAnimationsOf(BuildContext context) =>
+      MediaQuery.of(context).disableAnimations;
+
+  /// 根据 [MediaQueryData.disableAnimations] 返回实际时长
+  /// 开启减少动画时返回 [Duration.zero]，否则返回 [normal]
+  static Duration duration(BuildContext context, Duration normal) {
+    return disableAnimationsOf(context) ? Duration.zero : normal;
+  }
+
+  /// 根据 [MediaQueryData.disableAnimations] 返回实际曲线
+  /// 开启减少动画时返回 [Curves.linear]，否则返回 [curve]
+  static Curve curve(BuildContext context, Curve curve) {
+    return disableAnimationsOf(context) ? Curves.linear : curve;
+  }
+
+  // ============================================================
   // Stagger 间隔规范
   // ============================================================
 
@@ -121,6 +142,7 @@ class AppAnimations {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
+    if (disableAnimationsOf(context)) return child;
     final slideAnim = Tween(
       begin: const Offset(1.0, 0.0),
       end: Offset.zero,
@@ -147,6 +169,7 @@ class AppAnimations {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
+    if (disableAnimationsOf(context)) return child;
     final slideAnim = Tween(
       begin: const Offset(0.0, 0.3),
       end: Offset.zero,
@@ -173,6 +196,7 @@ class AppAnimations {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
+    if (disableAnimationsOf(context)) return child;
     return FadeTransition(
       opacity: animation.drive(
         Tween(begin: 0.0, end: 1.0).chain(CurveTween(curve: easeOut)),
@@ -189,6 +213,7 @@ class AppAnimations {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
+    if (disableAnimationsOf(context)) return child;
     final scaleAnim = Tween(begin: 0.92, end: 1.0).chain(
       CurveTween(curve: spring),
     );
@@ -219,13 +244,15 @@ class AppAnimations {
     Color? barrierColor,
     String? barrierLabel,
   }) {
+    final disable = disableAnimationsOf(context);
     return showGeneralDialog<T>(
       context: context,
       barrierDismissible: barrierDismissible,
       barrierColor: barrierColor ?? Colors.black54,
       barrierLabel: barrierLabel ?? MaterialLocalizations.of(context).modalBarrierDismissLabel,
-      transitionDuration: page,
+      transitionDuration: disable ? Duration.zero : page,
       transitionBuilder: (context, animation, secondaryAnimation, child) {
+        if (disable) return child;
         final scaleAnim = Tween(begin: 0.92, end: 1.0).chain(
           CurveTween(curve: spring),
         );
@@ -255,12 +282,14 @@ class AppAnimations {
     bool isScrollControlled = false,
     Color? backgroundColor,
   }) {
+    final disable = disableAnimationsOf(context);
     return showGeneralDialog<T>(
       context: context,
       barrierDismissible: true,
       barrierColor: Colors.black54,
-      transitionDuration: page,
+      transitionDuration: disable ? Duration.zero : page,
       transitionBuilder: (context, animation, secondaryAnimation, child) {
+        if (disable) return child;
         final slideAnim = Tween(
           begin: const Offset(0.0, 1.0),
           end: Offset.zero,
@@ -297,21 +326,26 @@ class AppAnimations {
 
   /// 消息入场动画：用户消息从右滑入，AI 消息从左滑入，带淡入效果
   static Widget messageEntrance({required Widget child, required bool isUser}) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: normal,
-      curve: spring,
-      builder: (context, value, childWidget) {
-        final offset = isUser ? 20.0 : -20.0;
-        return Opacity(
-          opacity: value.clamp(0.0, 1.0),
-          child: Transform.translate(
-            offset: Offset(offset * (1 - value), 0),
-            child: childWidget,
-          ),
+    return Builder(
+      builder: (context) {
+        final disable = disableAnimationsOf(context);
+        return TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.0, end: 1.0),
+          duration: duration(context, normal),
+          curve: curve(context, spring),
+          builder: (context, value, childWidget) {
+            final offset = isUser ? 20.0 : -20.0;
+            return Opacity(
+              opacity: disable ? 1.0 : value.clamp(0.0, 1.0),
+              child: Transform.translate(
+                offset: Offset(offset * (1 - value), 0),
+                child: childWidget,
+              ),
+            );
+          },
+          child: child,
         );
       },
-      child: child,
     );
   }
 
@@ -346,11 +380,15 @@ class AppAnimations {
     Duration? duration,
     Curve? curve,
   }) {
-    return AnimatedSize(
-      duration: duration ?? page,
-      curve: curve ?? easeOutBack,
-      alignment: Alignment.topCenter,
-      child: expanded ? child : const SizedBox.shrink(),
+    return Builder(
+      builder: (context) {
+        return AnimatedSize(
+          duration: duration ?? AppAnimations.page,
+          curve: curve ?? easeOutBack,
+          alignment: Alignment.topCenter,
+          child: expanded ? child : const SizedBox.shrink(),
+        );
+      },
     );
   }
 
@@ -360,14 +398,19 @@ class AppAnimations {
     Duration? duration,
     Curve? curve,
   }) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: duration ?? normal,
-      curve: curve ?? easeOut,
-      builder: (context, value, childWidget) {
-        return Opacity(opacity: value, child: childWidget);
+    return Builder(
+      builder: (context) {
+        final disable = disableAnimationsOf(context);
+        return TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.0, end: 1.0),
+          duration: duration ?? normal,
+          curve: curve ?? easeOut,
+          builder: (context, value, childWidget) {
+            return Opacity(opacity: disable ? 1.0 : value, child: childWidget);
+          },
+          child: child,
+        );
       },
-      child: child,
     );
   }
 
@@ -378,18 +421,23 @@ class AppAnimations {
     Curve? curve,
     double from = 0.92,
   }) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: duration ?? normal,
-      curve: curve ?? easeOutBack,
-      builder: (context, value, childWidget) {
-        final scale = from + (1.0 - from) * value;
-        return Opacity(
-          opacity: value,
-          child: Transform.scale(scale: scale, child: childWidget),
+    return Builder(
+      builder: (context) {
+        final disable = disableAnimationsOf(context);
+        return TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.0, end: 1.0),
+          duration: duration ?? normal,
+          curve: curve ?? easeOutBack,
+          builder: (context, value, childWidget) {
+            final scale = disable ? 1.0 : from + (1.0 - from) * value;
+            return Opacity(
+              opacity: disable ? 1.0 : value,
+              child: Transform.scale(scale: scale, child: childWidget),
+            );
+          },
+          child: child,
         );
       },
-      child: child,
     );
   }
 }
@@ -428,11 +476,12 @@ class _BlinkingCursorWidgetState extends State<BlinkingCursorWidget>
 
   @override
   Widget build(BuildContext context) {
+    final disable = AppAnimations.disableAnimationsOf(context);
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
         return Opacity(
-          opacity: _controller.value,
+          opacity: disable ? 1.0 : _controller.value,
           child: const Text(
             '|',
             style: TextStyle(
@@ -501,15 +550,16 @@ class _ScaleTapWidgetState extends State<ScaleTapWidget>
 
   @override
   Widget build(BuildContext context) {
+    final disable = AppAnimations.disableAnimationsOf(context);
     return GestureDetector(
       onTap: widget.onTap,
-      onTapDown: _onTapDown,
-      onTapUp: _onTapUp,
-      onTapCancel: _onTapCancel,
+      onTapDown: disable ? null : _onTapDown,
+      onTapUp: disable ? null : _onTapUp,
+      onTapCancel: disable ? null : _onTapCancel,
       child: AnimatedBuilder(
         animation: _controller,
         builder: (context, child) {
-          return Transform.scale(scale: _controller.value, child: child);
+          return Transform.scale(scale: disable ? 1.0 : _controller.value, child: child);
         },
         child: widget.child,
       ),
@@ -584,13 +634,15 @@ class _StaggerItemState extends State<_StaggerItem>
 
   @override
   Widget build(BuildContext context) {
+    final disable = AppAnimations.disableAnimationsOf(context);
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
         return Opacity(
-          opacity: _fadeAnim.value,
+          // spring 等弹性曲线会过冲，clamp 到 [0,1] 避免断言失败
+          opacity: disable ? 1.0 : _fadeAnim.value.clamp(0.0, 1.0),
           child: Transform.translate(
-            offset: Offset(0, _slideAnim.value),
+            offset: Offset(0, disable ? 0 : _slideAnim.value),
             child: child,
           ),
         );

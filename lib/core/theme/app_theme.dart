@@ -210,7 +210,7 @@ class AppTheme {
           borderRadius: AppRadius.smAll,
           border: Border.all(color: AppColors.borderLight),
         ),
-        textStyle: TextStyle(
+        textStyle: const TextStyle(
           color: AppColors.textPrimary,
           fontSize: AppTypography.caption,
         ),
@@ -244,7 +244,7 @@ class AppTheme {
           return AppColors.surface;
         }),
       ),
-      sliderTheme: SliderThemeData(
+      sliderTheme: const SliderThemeData(
         activeTrackColor: AppColors.green,
         inactiveTrackColor: AppColors.surface,
         thumbColor: AppColors.green,

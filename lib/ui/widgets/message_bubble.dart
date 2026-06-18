@@ -6,6 +6,8 @@
 /// 包含时间分隔器、压缩边界分隔器、代码块复制按钮等辅助组件。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -14,7 +16,9 @@ import 'package:markdown/markdown.dart' as md;
 import '../../core/theme/app_animations.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_radius.dart';
+import '../../core/theme/app_shadows.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_spring.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/utils/time_formatters.dart';
 
@@ -22,6 +26,18 @@ import '../../core/utils/time_formatters.dart';
 class _Colors {
   static const Color userText = Colors.white;
   static const Color assistantSurface = Color(0xFF262B28);
+}
+
+/// 消息气泡发送状态
+enum MessageBubbleStatus {
+  /// 发送中
+  sending,
+
+  /// 已发送成功
+  sent,
+
+  /// 发送失败
+  failed,
 }
 
 /// 清理 markdown 中的空 inline 节点，防止 flutter_markdown 渲染断言失败
@@ -158,6 +174,9 @@ class MessageBubble extends StatefulWidget {
   final String? searchQuery;
   final bool isSearchMatch;
 
+  /// 发送状态，用于显示发送中/成功/失败图标与背景过渡
+  final MessageBubbleStatus? status;
+
   const MessageBubble({
     super.key,
     required this.role,
@@ -173,6 +192,7 @@ class MessageBubble extends StatefulWidget {
     this.assistantAvatar,
     this.searchQuery,
     this.isSearchMatch = false,
+    this.status,
   });
 
   @override
@@ -190,6 +210,23 @@ class _MessageBubbleState extends State<MessageBubble> {
   bool get _hasReasoning =>
       widget.reasoningContent != null && widget.reasoningContent!.isNotEmpty;
 
+  /// 构建无障碍语义标签：发送者 + 内容摘要 + 时间
+  String _buildSemanticLabel() {
+    final roleLabel = _isUser ? '我' : '助手';
+    var summary = widget.content.trim();
+    if (summary.isEmpty) {
+      summary = widget.isStreaming ? '正在输入' : '空消息';
+    }
+    const maxLen = 120;
+    final displaySummary = summary.length > maxLen
+        ? '${summary.substring(0, maxLen)}...'
+        : summary;
+    final time = widget.createdAt != null
+        ? TimeFormatters.fullDateTime(widget.createdAt!)
+        : '';
+    return '$roleLabel：$displaySummary${time.isNotEmpty ? '，发送于 $time' : ''}';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isCompactBoundary) {
@@ -206,7 +243,7 @@ class _MessageBubbleState extends State<MessageBubble> {
         final bubble = Align(
           alignment: _isUser ? Alignment.centerRight : Alignment.centerLeft,
           child: Padding(
-            padding: EdgeInsets.symmetric(
+            padding: const EdgeInsets.symmetric(
               vertical: AppSpacing.xs,
               horizontal: AppSpacing.mdSm,
             ),
@@ -220,20 +257,15 @@ class _MessageBubbleState extends State<MessageBubble> {
                   child: GestureDetector(
                     onLongPress: () => _showContextMenu(context),
                     child: AnimatedContainer(
-                      duration: AppAnimations.normal,
-                      curve: AppAnimations.easeOut,
-                      decoration: widget.isSearchMatch
-                          ? BoxDecoration(
-                              borderRadius: AppRadius.mdAll,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppColors.green.withValues(alpha: 0.5),
-                                  blurRadius: 12,
-                                  spreadRadius: 2,
-                                ),
-                              ],
-                            )
-                          : null,
+                      duration: AppAnimations.duration(
+                        context,
+                        AppAnimations.normal,
+                      ),
+                      curve: AppAnimations.curve(
+                        context,
+                        AppAnimations.easeOut,
+                      ),
+                      decoration: _buildBubbleDecoration(),
                       child: CustomPaint(
                         painter: _BubblePainter(
                           color: _isUser
@@ -242,7 +274,10 @@ class _MessageBubbleState extends State<MessageBubble> {
                           isUser: _isUser,
                           gradient: _isUser
                               ? const LinearGradient(
-                                  colors: [AppColors.green, AppColors.greenLight],
+                                  colors: [
+                                    AppColors.green,
+                                    AppColors.greenLight,
+                                  ],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
                                 )
@@ -265,10 +300,17 @@ class _MessageBubbleState extends State<MessageBubble> {
                               if (_hasReasoning && !_isUser)
                                 _buildReasoningToggle(),
                               AnimatedSize(
-                                duration: AppAnimations.page,
-                                curve: AppAnimations.easeOutBack,
+                                duration: AppAnimations.duration(
+                                  context,
+                                  AppAnimations.page,
+                                ),
+                                curve: AppAnimations.curve(
+                                  context,
+                                  AppAnimations.easeOutBack,
+                                ),
                                 alignment: Alignment.topCenter,
-                                child: _hasReasoning && _showReasoning && !_isUser
+                                child:
+                                    _hasReasoning && _showReasoning && !_isUser
                                     ? _buildReasoningContent()
                                     : const SizedBox.shrink(),
                               ),
@@ -280,6 +322,16 @@ class _MessageBubbleState extends State<MessageBubble> {
                                 Padding(
                                   padding: const EdgeInsets.only(top: 4),
                                   child: _buildBlinkingCursor(),
+                                ),
+                              if (_isUser && widget.status != null)
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: _MessageStatusIndicator(
+                                      status: widget.status,
+                                    ),
+                                  ),
                                 ),
                             ],
                           ),
@@ -295,9 +347,54 @@ class _MessageBubbleState extends State<MessageBubble> {
           ),
         );
 
-        if (!widget.animateEntrance) return bubble;
-        return AppAnimations.messageEntrance(isUser: _isUser, child: bubble);
+        final child = !widget.animateEntrance
+            ? bubble
+            : SpringEntrance(
+                fromScale: 0.88,
+                fromOffset: Offset(_isUser ? 16.0 : -16.0, 12),
+                spring: AppSprings.bouncy,
+                child: bubble,
+              );
+
+        // 为消息气泡提供完整的语义信息：发送者 + 摘要 + 时间
+        return Semantics(
+          container: true,
+          label: _buildSemanticLabel(),
+          onLongPressHint: '长按打开消息菜单',
+          child: child,
+        );
       },
+    );
+  }
+
+  /// 根据搜索匹配态/失败态/角色构建气泡外层装饰（多层级扩散阴影）
+  ///
+  /// 视觉升级：用户气泡使用主色辉光阴影（强化"我发出的"存在感），
+  /// 助手气泡使用中性柔和浮起阴影（2 层扩散，避免干扰阅读）。
+  BoxDecoration? _buildBubbleDecoration() {
+    if (widget.isSearchMatch) {
+      return BoxDecoration(
+        borderRadius: AppRadius.mdAll,
+        boxShadow: AppShadows.searchHighlight,
+      );
+    }
+    if (widget.status == MessageBubbleStatus.failed) {
+      return BoxDecoration(
+        borderRadius: AppRadius.mdAll,
+        boxShadow: AppShadows.error,
+      );
+    }
+    // 用户气泡：绿色辉光扩散阴影
+    if (_isUser) {
+      return BoxDecoration(
+        borderRadius: AppRadius.mdAll,
+        boxShadow: AppShadows.userBubble(AppColors.green),
+      );
+    }
+    // 助手气泡：中性柔和浮起阴影
+    return BoxDecoration(
+      borderRadius: AppRadius.mdAll,
+      boxShadow: AppShadows.assistantBubble,
     );
   }
 
@@ -321,12 +418,14 @@ class _MessageBubbleState extends State<MessageBubble> {
     );
   }
 
-  /// 思维链折叠/展开切换按钮
+  /// 思维链折叠/展开切换按钮 — 弹簧按压 + 旋转箭头
   Widget _buildReasoningToggle() {
-    return AppAnimations.scaleTap(
+    return SpringScaleTap(
       onTap: () => setState(() => _showReasoning = !_showReasoning),
-      scaleDown: 0.97,
-      child: Container(
+      scaleDown: 0.95,
+      child: AnimatedContainer(
+        duration: AppAnimations.duration(context, AppAnimations.quick),
+        curve: AppAnimations.curve(context, AppAnimations.easeOut),
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -344,7 +443,7 @@ class _MessageBubbleState extends State<MessageBubble> {
             const SizedBox(width: 6),
             Text(
               _showReasoning ? '隐藏思维链' : '查看思维链',
-              style: TextStyle(
+              style: const TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: AppTypography.caption,
                 fontWeight: FontWeight.w500,
@@ -353,8 +452,8 @@ class _MessageBubbleState extends State<MessageBubble> {
             AppSpacing.hXS,
             AnimatedRotation(
               turns: _showReasoning ? 0.5 : 0.0,
-              duration: AppAnimations.quick,
-              curve: AppAnimations.spring,
+              duration: AppAnimations.duration(context, AppAnimations.normal),
+              curve: AppAnimations.curve(context, AppSprings.bouncyCurve),
               child: const Icon(
                 Icons.keyboard_arrow_down,
                 color: AppColors.textSecondary,
@@ -371,7 +470,7 @@ class _MessageBubbleState extends State<MessageBubble> {
   Widget _buildReasoningContent() {
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.all(AppSpacing.mdSm),
+      padding: const EdgeInsets.all(AppSpacing.mdSm),
       decoration: BoxDecoration(
         color: AppColors.bgSecondary,
         borderRadius: AppRadius.mdAll,
@@ -382,7 +481,7 @@ class _MessageBubbleState extends State<MessageBubble> {
         children: [
           Row(
             children: [
-              Icon(
+              const Icon(
                 Icons.psychology,
                 color: AppColors.textSecondary,
                 size: 14,
@@ -402,7 +501,7 @@ class _MessageBubbleState extends State<MessageBubble> {
           AppSpacing.vSM,
           Text(
             widget.reasoningContent!,
-            style: TextStyle(
+            style: const TextStyle(
               color: AppColors.textSecondary,
               fontSize: 13,
               height: 1.5,
@@ -420,7 +519,7 @@ class _MessageBubbleState extends State<MessageBubble> {
     if (_isUser) {
       final textWidget = Text(
         widget.content,
-        style: TextStyle(
+        style: const TextStyle(
           color: _Colors.userText,
           fontSize: AppTypography.bodyLg,
           height: 1.5,
@@ -441,7 +540,7 @@ class _MessageBubbleState extends State<MessageBubble> {
     if (widget.isStreaming) {
       return Text(
         widget.content.trimRight(),
-        style: TextStyle(
+        style: const TextStyle(
           color: AppColors.textPrimary,
           fontSize: AppTypography.bodyLg,
           height: 1.6,
@@ -469,12 +568,12 @@ class _MessageBubbleState extends State<MessageBubble> {
       data: _sanitizeMarkdown(widget.content.trimRight()),
       builders: {'pre': _CodeBlockBuilder()},
       styleSheet: MarkdownStyleSheet(
-        p: TextStyle(
+        p: const TextStyle(
           color: AppColors.textPrimary,
           fontSize: AppTypography.bodyLg,
           height: 1.6,
         ),
-        code: TextStyle(
+        code: const TextStyle(
           color: Color(0xFFE0E0E0),
           fontSize: 13,
           backgroundColor: AppColors.bgSecondary,
@@ -485,36 +584,36 @@ class _MessageBubbleState extends State<MessageBubble> {
           borderRadius: BorderRadius.circular(AppRadius.sm),
           border: Border.all(color: AppColors.borderLight),
         ),
-        h1: TextStyle(
+        h1: const TextStyle(
           color: AppColors.textPrimary,
           fontSize: AppTypography.display,
           fontWeight: FontWeight.bold,
         ),
-        h2: TextStyle(
+        h2: const TextStyle(
           color: AppColors.textPrimary,
           fontSize: AppTypography.headline,
           fontWeight: FontWeight.bold,
         ),
-        h3: TextStyle(
+        h3: const TextStyle(
           color: AppColors.textPrimary,
           fontSize: AppTypography.title,
           fontWeight: FontWeight.w600,
         ),
-        a: TextStyle(
+        a: const TextStyle(
           color: Color(0xFF7EC8E3),
           decoration: TextDecoration.underline,
         ),
-        blockquote: TextStyle(
+        blockquote: const TextStyle(
           color: AppColors.textSecondary,
           fontStyle: FontStyle.italic,
         ),
-        blockquoteDecoration: BoxDecoration(
+        blockquoteDecoration: const BoxDecoration(
           border: Border(
             left: BorderSide(color: AppColors.textSecondary, width: 3),
           ),
           color: AppColors.surface,
         ),
-        listBullet: TextStyle(color: AppColors.textPrimary),
+        listBullet: const TextStyle(color: AppColors.textPrimary),
       ),
     );
   }
@@ -526,7 +625,11 @@ class _MessageBubbleState extends State<MessageBubble> {
     if (query.isEmpty) {
       return Text(
         text,
-        style: TextStyle(color: baseColor, fontSize: AppTypography.bodyLg, height: 1.5),
+        style: TextStyle(
+          color: baseColor,
+          fontSize: AppTypography.bodyLg,
+          height: 1.5,
+        ),
       );
     }
     final spans = <InlineSpan>[];
@@ -552,7 +655,11 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
     return RichText(
       text: TextSpan(
-        style: TextStyle(color: baseColor, fontSize: AppTypography.bodyLg, height: 1.5),
+        style: TextStyle(
+          color: baseColor,
+          fontSize: AppTypography.bodyLg,
+          height: 1.5,
+        ),
         children: spans,
       ),
     );
@@ -579,7 +686,11 @@ class _MessageBubbleState extends State<MessageBubble> {
             children: [
               const Row(
                 children: [
-                  Icon(Icons.summarize, color: AppColors.textSecondary, size: 14),
+                  Icon(
+                    Icons.summarize,
+                    color: AppColors.textSecondary,
+                    size: 14,
+                  ),
                   SizedBox(width: 6),
                   Text(
                     '对话摘要',
@@ -594,18 +705,18 @@ class _MessageBubbleState extends State<MessageBubble> {
               ),
               const SizedBox(height: 6),
               AnimatedSize(
-                duration: AppAnimations.page,
-                curve: AppAnimations.easeOutBack,
+                duration: AppAnimations.duration(context, AppAnimations.page),
+                curve: AppAnimations.curve(context, AppAnimations.easeOutBack),
                 alignment: Alignment.topCenter,
                 child: _isSummaryExpanded && widget.content.trim().isNotEmpty
                     ? MarkdownBody(
                         data: _sanitizeMarkdown(widget.content.trimRight()),
                         styleSheet: MarkdownStyleSheet(
-                          p: TextStyle(
+                          p: const TextStyle(
                             color: AppColors.textPrimary,
                             fontSize: AppTypography.body,
                           ),
-                          code: TextStyle(
+                          code: const TextStyle(
                             color: Color(0xFFE0E0E0),
                             backgroundColor: AppColors.bgSecondary,
                             fontSize: 13,
@@ -616,7 +727,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                         previewLines,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: 13,
                           height: 1.5,
@@ -628,7 +739,7 @@ class _MessageBubbleState extends State<MessageBubble> {
         ),
         AppAnimations.scaleTap(
           onTap: () => setState(() => _isSummaryExpanded = !_isSummaryExpanded),
-          scaleDown: 0.97,
+          scaleDown: 0.95,
           child: Container(
             margin: const EdgeInsets.only(top: 6),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -641,8 +752,11 @@ class _MessageBubbleState extends State<MessageBubble> {
               children: [
                 AnimatedRotation(
                   turns: _isSummaryExpanded ? 0.5 : 0.0,
-                  duration: AppAnimations.quick,
-                  curve: AppAnimations.spring,
+                  duration: AppAnimations.duration(
+                    context,
+                    AppAnimations.normal,
+                  ),
+                  curve: AppAnimations.curve(context, AppSprings.bouncyCurve),
                   child: const Icon(
                     Icons.keyboard_arrow_down,
                     color: AppColors.textSecondary,
@@ -652,7 +766,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                 AppSpacing.hXS,
                 Text(
                   _isSummaryExpanded ? '收起摘要' : '展开摘要',
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: AppTypography.caption,
                     fontWeight: FontWeight.w500,
@@ -680,8 +794,8 @@ class _MessageBubbleState extends State<MessageBubble> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(Icons.copy, color: AppColors.textSecondary),
-              title: Text(
+              leading: const Icon(Icons.copy, color: AppColors.textSecondary),
+              title: const Text(
                 '复制内容',
                 style: TextStyle(color: AppColors.textPrimary),
               ),
@@ -699,7 +813,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                 ),
                 title: Text(
                   _showReasoning ? '折叠思维链' : '展开思维链',
-                  style: TextStyle(color: AppColors.textPrimary),
+                  style: const TextStyle(color: AppColors.textPrimary),
                 ),
                 onTap: () {
                   Navigator.pop(context);
@@ -708,8 +822,8 @@ class _MessageBubbleState extends State<MessageBubble> {
               ),
             if (widget.onDelete != null)
               ListTile(
-                leading: Icon(Icons.delete, color: AppColors.error),
-                title: Text(
+                leading: const Icon(Icons.delete, color: AppColors.error),
+                title: const Text(
                   '删除消息',
                   style: TextStyle(color: AppColors.error),
                 ),
@@ -732,24 +846,40 @@ class CompactBoundarySeparator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Container(
-        margin: EdgeInsets.symmetric(vertical: AppSpacing.md),
-        padding: EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-        decoration: BoxDecoration(
-          color: AppColors.bgSecondary,
-          borderRadius: AppRadius.smAll,
-          border: Border.all(color: AppColors.borderLight),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.compress, color: AppColors.textSecondary, size: 14),
-            AppSpacing.hSM,
-            Text(
-              '以上为历史对话摘要',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: AppTypography.caption),
-            ),
-          ],
+      child: SpringEntrance(
+        fromScale: 0.9,
+        fromOffset: Offset.zero,
+        spring: AppSprings.gentle,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.bgSecondary,
+            borderRadius: AppRadius.smAll,
+            border: Border.all(color: AppColors.borderLight),
+            boxShadow: AppShadows.assistantBubble,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.compress,
+                color: AppColors.textSecondary,
+                size: 14,
+              ),
+              AppSpacing.hSM,
+              const Text(
+                '以上为历史对话摘要',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: AppTypography.caption,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -823,9 +953,11 @@ class _CodeBlockWithCopyState extends State<_CodeBlockWithCopy> {
           // 顶部栏 — 语言标识 + 复制按钮
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               color: AppColors.surface,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.sm)),
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(AppRadius.sm),
+              ),
               border: Border(bottom: BorderSide(color: AppColors.borderLight)),
             ),
             child: Row(
@@ -833,7 +965,7 @@ class _CodeBlockWithCopyState extends State<_CodeBlockWithCopy> {
                 if (widget.language.isNotEmpty)
                   Text(
                     widget.language,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: AppColors.textSecondary,
                       fontSize: AppTypography.caption,
                       fontWeight: FontWeight.w500,
@@ -842,12 +974,20 @@ class _CodeBlockWithCopyState extends State<_CodeBlockWithCopy> {
                 const Spacer(),
                 AppAnimations.scaleTap(
                   onTap: _copyCode,
-                  scaleDown: 0.92,
+                  scaleDown: 0.90,
                   child: AnimatedSwitcher(
                     duration: AppAnimations.micro,
                     transitionBuilder: (child, animation) => FadeTransition(
                       opacity: animation,
-                      child: ScaleTransition(scale: animation, child: child),
+                      child: ScaleTransition(
+                        scale: animation.drive(
+                          Tween(
+                            begin: 0.6,
+                            end: 1.0,
+                          ).chain(CurveTween(curve: AppSprings.bouncyCurve)),
+                        ),
+                        child: child,
+                      ),
                     ),
                     child: Row(
                       key: ValueKey(_copied),
@@ -879,10 +1019,10 @@ class _CodeBlockWithCopyState extends State<_CodeBlockWithCopy> {
           ),
           // 代码正文区域
           Padding(
-            padding: EdgeInsets.all(AppSpacing.mdSm),
+            padding: const EdgeInsets.all(AppSpacing.mdSm),
             child: SelectableText(
               widget.code,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Color(0xFFE0E0E0),
                 fontSize: 13,
                 fontFamily: 'monospace',
@@ -896,6 +1036,124 @@ class _CodeBlockWithCopyState extends State<_CodeBlockWithCopy> {
   }
 }
 
+/// 消息状态指示器 — 发送中/成功/失败图标动画
+///
+/// 状态切换时使用缩放+淡入淡出过渡；成功图标会在显示 2 秒后自动隐藏，
+/// 避免对历史消息造成持续干扰。尊重系统动画减少设置。
+class _MessageStatusIndicator extends StatefulWidget {
+  final MessageBubbleStatus? status;
+
+  const _MessageStatusIndicator({required this.status});
+
+  @override
+  State<_MessageStatusIndicator> createState() =>
+      _MessageStatusIndicatorState();
+}
+
+class _MessageStatusIndicatorState extends State<_MessageStatusIndicator> {
+  bool _sentVisible = false;
+  bool _hasBeenSending = false;
+  Timer? _hideSentTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.status == MessageBubbleStatus.sending) {
+      _hasBeenSending = true;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessageStatusIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.status == MessageBubbleStatus.sending) {
+      _hasBeenSending = true;
+    }
+    if (widget.status == MessageBubbleStatus.sent &&
+        _hasBeenSending &&
+        oldWidget.status != MessageBubbleStatus.sent) {
+      _sentVisible = true;
+      _hideSentTimer?.cancel();
+      _hideSentTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) setState(() => _sentVisible = false);
+      });
+    } else if (widget.status != MessageBubbleStatus.sent) {
+      _sentVisible = false;
+      _hideSentTimer?.cancel();
+    }
+  }
+
+  @override
+  void dispose() {
+    _hideSentTimer?.cancel();
+    super.dispose();
+  }
+
+  MessageBubbleStatus? get _effectiveStatus {
+    if (widget.status == MessageBubbleStatus.sending) {
+      return MessageBubbleStatus.sending;
+    }
+    if (widget.status == MessageBubbleStatus.failed) {
+      return MessageBubbleStatus.failed;
+    }
+    if (widget.status == MessageBubbleStatus.sent &&
+        _sentVisible &&
+        _hasBeenSending) {
+      return MessageBubbleStatus.sent;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final effective = _effectiveStatus;
+    return AnimatedSwitcher(
+      duration: AppAnimations.duration(context, AppAnimations.micro),
+      switchInCurve: AppAnimations.curve(context, AppAnimations.spring),
+      switchOutCurve: AppAnimations.curve(context, AppAnimations.easeIn),
+      transitionBuilder: (child, animation) {
+        return ScaleTransition(
+          scale: animation,
+          child: FadeTransition(opacity: animation, child: child),
+        );
+      },
+      child: _buildIcon(effective),
+    );
+  }
+
+  Widget _buildIcon(MessageBubbleStatus? status) {
+    if (status == null) {
+      return const SizedBox.shrink(key: ValueKey('status_empty'));
+    }
+    switch (status) {
+      case MessageBubbleStatus.sending:
+        return const SizedBox(
+          key: ValueKey('status_sending'),
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
+          ),
+        );
+      case MessageBubbleStatus.sent:
+        return const Icon(
+          key: ValueKey('status_sent'),
+          Icons.check_circle_outline,
+          size: 14,
+          color: AppColors.success,
+        );
+      case MessageBubbleStatus.failed:
+        return const Icon(
+          key: ValueKey('status_failed'),
+          Icons.error_outline,
+          size: 14,
+          color: AppColors.error,
+        );
+    }
+  }
+}
+
 /// 时间分隔器组件
 /// 时间分隔器 — 消息列表中相隔超过 5 分钟时插入的时间标签
 class TimeSeparator extends StatelessWidget {
@@ -906,16 +1164,25 @@ class TimeSeparator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Container(
-        margin: EdgeInsets.symmetric(vertical: AppSpacing.md),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: BoxDecoration(
-          color: AppColors.surface.withValues(alpha: 0.6),
-          borderRadius: AppRadius.xsAll,
-        ),
-        child: Text(
-          _formatTime(dateTime),
-          style: TextStyle(color: AppColors.textTertiary, fontSize: AppTypography.caption),
+      child: SpringEntrance(
+        fromScale: 0.92,
+        fromOffset: const Offset(0, 8),
+        spring: AppSprings.gentle,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.surface.withValues(alpha: 0.6),
+            borderRadius: AppRadius.xsAll,
+            boxShadow: AppShadows.assistantBubble,
+          ),
+          child: Text(
+            _formatTime(dateTime),
+            style: const TextStyle(
+              color: AppColors.textTertiary,
+              fontSize: AppTypography.caption,
+            ),
+          ),
         ),
       ),
     );

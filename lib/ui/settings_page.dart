@@ -346,6 +346,102 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
     }
   }
 
+
+  /// 设置分组折叠态摘要 — 通用文本行
+  Widget _buildSummaryRow(String text, {IconData? icon}) {
+    return Row(
+      children: [
+        if (icon != null) ...[
+          Icon(
+            icon,
+            size: 16,
+            color: AppColors.textPrimary.withValues(alpha: 0.5),
+          ),
+          const SizedBox(width: 8),
+        ],
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// API 配置分组摘要
+  Widget _buildProviderSummary() {
+    return _buildSummaryRow(_getProviderName(), icon: Icons.cloud_outlined);
+  }
+
+  /// System Prompt 分组摘要
+  Widget _buildSystemPromptSummary() {
+    final prompt = _systemPromptController.text.trim();
+    final summary = prompt.isEmpty ? '未设置' : prompt;
+    const maxLen = 60;
+    final display = summary.length > maxLen
+        ? '${summary.substring(0, maxLen)}...'
+        : summary;
+    return _buildSummaryRow(display, icon: Icons.chat_bubble_outline);
+  }
+
+  /// 模型选择分组摘要
+  Widget _buildModelSummary() {
+    return _buildSummaryRow(_modelInputController.text.trim().isNotEmpty
+        ? _modelInputController.text.trim()
+        : _selectedModel, icon: Icons.model_training);
+  }
+
+  /// 模型参数分组摘要
+  Widget _buildModelParamsSummary() {
+    return _buildSummaryRow(
+      'Temperature ${_temperature.toStringAsFixed(1)} · Max Tokens $_maxTokens',
+      icon: Icons.tune,
+    );
+  }
+
+  /// 子代理分组摘要
+  Widget _buildAgentFeaturesSummary() {
+    String status(bool enabled) => enabled ? '开' : '关';
+    return _buildSummaryRow(
+      '会话记忆 ${status(_sessionMemoryEnabled)} · 自动压缩 ${status(_autoCompactEnabled)} · 自动整固 ${status(_autoDreamEnabled)}',
+      icon: Icons.auto_fix_high_outlined,
+    );
+  }
+
+  /// 思考模式分组摘要
+  Widget _buildThinkingSummary() {
+    final status = _thinkingEnabled ? '已启用' : '已禁用';
+    return _buildSummaryRow(
+      '$status · ${_reasoningEffort.toUpperCase()}',
+      icon: Icons.lightbulb_outline,
+    );
+  }
+
+  /// 输出格式分组摘要
+  Widget _buildJsonModeSummary() {
+    return _buildSummaryRow(
+      'JSON 输出模式 ${_jsonMode ? '开' : '关'}',
+      icon: Icons.code,
+    );
+  }
+
+  /// 外观分组摘要
+  Widget _buildAppearanceSummary() {
+    return _buildSummaryRow('暗色模式', icon: Icons.dark_mode);
+  }
+
+  /// 数据管理分组摘要
+  Widget _buildDataManagementSummary() {
+    return _buildSummaryRow('导出 · 导入 · 清空', icon: Icons.storage);
+  }
+
+  /// 关于分组摘要
+  Widget _buildAboutSummary() {
+    return _buildSummaryRow('v1.0.0', icon: Icons.info_outline);
+  }
+
   /// 根据 Provider ID 获取显示名称（默认使用当前选中 Provider）
   String _getProviderName([String? providerId]) {
     final id = providerId ?? _selectedProviderId;
@@ -907,6 +1003,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 0,
                   child: SettingsGroup(
                   title: 'API 配置',
+                  summary: _buildProviderSummary(),
                   children: [
                     _buildProviderConfigSection(),
                   ],
@@ -916,6 +1013,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 1,
                   child: SettingsGroup(
                   title: 'System Prompt',
+                  summary: _buildSystemPromptSummary(),
                   children: [
                     Padding(
                       padding: const EdgeInsets.symmetric(
@@ -997,6 +1095,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 2,
                   child: SettingsGroup(
                   title: '模型选择',
+                  summary: _buildModelSummary(),
                   children: [
                     _buildModelInput(),
                   ],
@@ -1006,6 +1105,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 3,
                   child: SettingsGroup(
                   title: '模型参数',
+                  summary: _buildModelParamsSummary(),
                   children: [
                     SettingsSlider(
                       label: 'Temperature',
@@ -1043,6 +1143,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 4,
                   child: SettingsGroup(
                   title: '子代理',
+                  summary: _buildAgentFeaturesSummary(),
                   children: [
                     SettingsToggle(
                       label: '会话记忆',
@@ -1163,6 +1264,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 5,
                   child: SettingsGroup(
                   title: '思考模式',
+                  summary: _buildThinkingSummary(),
                   children: [
                     SettingsToggle(
                       label: '启用思考模式',
@@ -1199,6 +1301,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 6,
                   child: SettingsGroup(
                   title: '输出格式',
+                  summary: _buildJsonModeSummary(),
                   children: [
                     SettingsToggle(
                       label: 'JSON 输出模式',
@@ -1217,6 +1320,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 7,
                   child: SettingsGroup(
                   title: '外观',
+                  summary: _buildAppearanceSummary(),
                   children: [
                     ListTile(
                       dense: true,
@@ -1255,6 +1359,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 8,
                   child: SettingsGroup(
                   title: '数据管理',
+                  summary: _buildDataManagementSummary(),
                   children: [
                     SettingsActionButton(
                       label: '导出所有数据',
@@ -1293,6 +1398,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                   index: 9,
                   child: SettingsGroup(
                   title: '关于',
+                  summary: _buildAboutSummary(),
                   children: [
                     ListTile(
                       dense: true,

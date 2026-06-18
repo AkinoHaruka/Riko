@@ -57,8 +57,10 @@ dependencies:
   intl: ^0.19.0
   # 骨架屏
   shimmer: ^3.0.0
+  # 链式动效库 — 简化复杂动画编排，支持 fade/scale/slide/blur/shadow 等
+  flutter_animate: ^4.5.2
   # Font Awesome 图标库
-  font_awesome_flutter: ^10.8.0
+  font_awesome_flutter: ^11.0.0
   # WebSocket 支持（跨平台事件推送）
   web_socket_channel: ^3.0.0
   # 图片裁剪（纯 Dart，跨平台）
@@ -70,6 +72,9 @@ dependencies:
   # 安全存储（加密存储 JWT Token）
   flutter_secure_storage: ^9.2.4
   desktop_multi_window: ^0.3.0
+
+  # Lottie 矢量动画（启动页媒体化）
+  lottie: ^3.1.2
 
 dev_dependencies:
   flutter_test:
@@ -107,6 +112,9 @@ flutter:
   # assets:
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
+
+  assets:
+    - assets/animations/splash_brand.json
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
