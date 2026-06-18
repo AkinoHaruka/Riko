@@ -10,6 +10,7 @@ import { executeFind } from './findFiles.js';
 
 export const findToolHandler: ToolHandler = {
   name: 'find_tool',
+  metadata: { readOnly: true, mutating: false, categories: ['filesystem'] },
 
   /** 执行文件查找操作 */
   execute(args: Record<string, unknown>, context: ToolContext): ToolCallResult {

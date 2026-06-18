@@ -8,6 +8,7 @@ import { listSkills } from '../../domain/skill/index.js';
 
 export const skillsListToolHandler: ToolHandler = {
   name: 'SkillsList',
+  metadata: { readOnly: true, mutating: false, categories: ['skill'] },
 
   execute(args: Record<string, unknown>, _context: ToolContext): ToolCallResult {
     const query = args.query as string | undefined;

@@ -8,6 +8,7 @@ import { getSkill } from '../../domain/skill/index.js';
 
 export const skillViewToolHandler: ToolHandler = {
   name: 'SkillView',
+  metadata: { readOnly: true, mutating: false, categories: ['skill'] },
 
   execute(args: Record<string, unknown>, _context: ToolContext): ToolCallResult {
     const name = args.name as string;

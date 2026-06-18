@@ -8,7 +8,7 @@
  */
 
 // 从核心层重新导出共享类型（domain 层应直接从 core/types/tools 导入）
-export type { ToolContext, ToolHandler, ToolRegistry, ToolCallResult } from '../core/types/tools.js';
+export type { ToolContext, ToolHandler, ToolRegistry, ToolCallResult, ToolMetadata } from '../core/types/tools.js';
 
 // ─── 错误代码常量 ───
 

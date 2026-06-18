@@ -10,6 +10,7 @@ import { validateSessionMemoryPath } from '../pathSecurity.js';
 
 export const catToolHandler: ToolHandler = {
   name: 'Read',
+  metadata: { readOnly: true, mutating: false, categories: ['filesystem'] },
 
   /**
    * 前置校验：验证文件路径是否在 memoryRoot 范围内。

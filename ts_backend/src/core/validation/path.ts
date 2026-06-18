@@ -195,3 +195,89 @@ export function resolveVirtualPath(filePath: string, memoryRoot?: string): Virtu
     relativePath: relative,
   };
 }
+
+// ─── 路径安全增强（2026-06） ───
+
+/**
+ * @security 检测路径中是否包含 `..` 遍历组件。
+ *
+ * 与 validateCommonPath 的 `parts.includes('..')` 检查互补，
+ * 此函数可独立使用，用于在路径拼接前预检查。
+ *
+ * @param filePath - 待检查的路径
+ * @returns true 表示路径含 `..` 组件
+ */
+export function hasTraversalComponent(filePath: string): boolean {
+  const parts = filePath.split(/[/\\]/);
+  return parts.includes('..');
+}
+
+/**
+ * @security 校验解析后的路径是否在指定根目录内。
+ *
+ * 使用 realpathSync 解析符号链接，防止通过符号链接逃逸到根目录外。
+ * 路径不存在时回退到 path.resolve 的结果做前缀检查。
+ *
+ * @param resolvedPath - 已解析的绝对路径
+ * @param rootDir - 允许的根目录绝对路径
+ * @returns true 表示路径在根目录内
+ */
+export function validateWithinDir(resolvedPath: string, rootDir: string): boolean {
+  const rootResolved = path.resolve(rootDir);
+
+  try {
+    // 优先使用 realpathSync 解析符号链接
+    const realResolved = fs.realpathSync(resolvedPath);
+    const realRoot = fs.realpathSync(rootResolved);
+    return pathStartsWith(realResolved, realRoot + path.sep) || pathEquals(realResolved, realRoot);
+  } catch {
+    // 路径不存在时回退到前缀检查
+    return pathStartsWith(resolvedPath, rootResolved + path.sep) || pathEquals(resolvedPath, rootResolved);
+  }
+}
+
+/**
+ * @security 增强的路径校验，综合检查多种安全威胁。
+ *
+ * 检查项：
+ * 1. 空字节注入（\x00）
+ * 2. 目录遍历（.. 组件）
+ * 3. 绝对路径（防止写入系统目录）
+ * 4. 符号链接逃逸（realpathSync 解析后是否在 root 内）
+ *
+ * 与 validateCommonPath 的区别：
+ * - validateCommonPath 返回 PathValidationResult（含 resolvedPath 和 error）
+ * - validatePathEnhanced 返回布尔值，适用于仅需判断是否安全的场景
+ *
+ * @param filePath - 待校验的相对文件路径
+ * @param rootDir - 允许的根目录绝对路径
+ * @returns true 表示路径安全
+ */
+export function validatePathEnhanced(filePath: string, rootDir: string): boolean {
+  // 1. 空字节检查
+  if (filePath.includes('\x00')) {
+    return false;
+  }
+
+  // 2. 目录遍历检查
+  if (hasTraversalComponent(filePath)) {
+    return false;
+  }
+
+  // 3. 绝对路径检查
+  const trimmed = filePath.trim();
+  if (trimmed && (path.isAbsolute(trimmed) || trimmed.startsWith('/'))) {
+    return false;
+  }
+
+  // 4. 解析后路径是否在 root 内
+  const rootResolved = path.resolve(rootDir);
+  let resolved: string;
+  if (!trimmed || trimmed === '.') {
+    resolved = rootResolved;
+  } else {
+    resolved = path.resolve(rootResolved, trimmed);
+  }
+
+  return validateWithinDir(resolved, rootResolved);
+}

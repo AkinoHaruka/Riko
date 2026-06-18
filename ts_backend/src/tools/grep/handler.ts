@@ -10,6 +10,7 @@ import { sanitizeSearchPath } from '../pathSecurity.js';
 
 export const grepToolHandler: ToolHandler = {
   name: 'Grep',
+  metadata: { readOnly: true, mutating: false, categories: ['filesystem'] },
 
   /** 执行文件内容搜索，搜索路径经过安全清理 */
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolCallResult> {

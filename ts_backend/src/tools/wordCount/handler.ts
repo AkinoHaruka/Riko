@@ -10,6 +10,7 @@ import { sanitizeSearchPath } from '../pathSecurity.js';
 
 export const wcToolHandler: ToolHandler = {
   name: 'wc_tool',
+  metadata: { readOnly: true, mutating: false, categories: ['filesystem'] },
 
   /** 执行字数统计，目录路径经过安全清理 */
   execute(args: Record<string, unknown>, context: ToolContext): ToolCallResult {

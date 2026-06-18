@@ -53,6 +53,7 @@ export function search(keyword: string, userId: string, limit = 500): Memory[] {
 
 /**
  * 创建新记忆。若同 user_id + key 已存在则先删除旧记录（upsert 语义）。
+ * @security DELETE + INSERT 操作用事务包裹，防止并发竞态导致数据丢失。
  * @param data - 创建请求数据
  * @returns 创建后的记忆对象
  */
@@ -63,17 +64,20 @@ export function create(data: MemoryCreateRequest): Memory {
   const type = data.type ?? 'fact';
   const userId = data.user_id ?? '';
 
-  // 同 key 的记忆先删除再插入，实现 upsert
-  db.prepare('DELETE FROM memories WHERE user_id = ? AND key = ?').run(userId, data.key);
-
-  db.prepare('INSERT INTO memories (id, user_id, key, content, source, type) VALUES (?, ?, ?, ?, ?, ?)').run(
-    id,
-    userId,
-    data.key,
-    data.content,
-    source,
-    type,
-  );
+  // 用事务包裹 DELETE + INSERT，确保 upsert 原子性
+  // 防止并发请求在 DELETE 和 INSERT 之间交错导致数据丢失或重复
+  const upsertTxn = db.transaction(() => {
+    db.prepare('DELETE FROM memories WHERE user_id = ? AND key = ?').run(userId, data.key);
+    db.prepare('INSERT INTO memories (id, user_id, key, content, source, type) VALUES (?, ?, ?, ?, ?, ?)').run(
+      id,
+      userId,
+      data.key,
+      data.content,
+      source,
+      type,
+    );
+  });
+  upsertTxn();
 
   const row = db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as Record<string, unknown>;
 

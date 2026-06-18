@@ -11,6 +11,7 @@ import { ftsSearch } from '../../domain/memory/ftsSearch.js';
 
 export const memorySearchToolHandler: ToolHandler = {
   name: 'SearchMemory',
+  metadata: { readOnly: true, mutating: false, categories: ['memory'] },
 
   /** 执行长期记忆搜索（FTS5 + 文件扫描混合） */
   execute(args: Record<string, unknown>, context: ToolContext): ToolCallResult {

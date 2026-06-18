@@ -10,6 +10,7 @@ import { validateSessionMemoryPath } from '../pathSecurity.js';
 
 export const editToolHandler: ToolHandler = {
   name: 'Edit',
+  metadata: { readOnly: false, mutating: true, categories: ['filesystem'] },
 
   /**
    * 前置校验：验证文件路径是否在 memoryRoot 范围内。

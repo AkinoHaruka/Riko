@@ -7,7 +7,7 @@
  * TODO: 在执行工具前校验用户角色与 handler.requiredRole 是否匹配，
  *   不匹配时返回权限不足错误。需从 ToolContext 或调用链中获取当前用户角色。
  */
-import type { ToolHandler, ToolRegistry } from '../core/types/tools.js';
+import type { ToolHandler, ToolRegistry, ToolMetadata } from '../core/types/tools.js';
 
 class DefaultToolRegistry implements ToolRegistry {
   private handlers = new Map<string, ToolHandler>();
@@ -20,6 +20,11 @@ class DefaultToolRegistry implements ToolRegistry {
   /** 按名称查找工具处理器 */
   get(name: string): ToolHandler | undefined {
     return this.handlers.get(name);
+  }
+
+  /** 按名称查找工具元数据 */
+  getMetadata(name: string): ToolMetadata | undefined {
+    return this.handlers.get(name)?.metadata;
   }
 
   /** 判断指定名称的工具是否已注册 */

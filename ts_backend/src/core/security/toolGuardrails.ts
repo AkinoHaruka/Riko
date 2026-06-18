@@ -16,27 +16,13 @@
 
 import { createHash } from 'node:crypto';
 import { eventManager } from '../events/index.js';
+import { toolRegistry } from '../../tools/registry.js';
 
 // ── 工具分类 ──────────────────────────────────────────────────────
-
-/** 幂等（只读）工具集合 */
-const IDEMPOTENT_TOOLS = new Set([
-  'read_tool', 'cat_tool',
-  'grep_tool',
-  'ls_tool', 'glob_tool',
-  'find_tool',
-  'stat_tool',
-  'wc_tool',
-  'head_tool',
-  'tail_tool',
-  'memory_search_tool',
-]);
-
-/** 变更（写操作）工具集合 */
-const MUTATING_TOOLS = new Set([
-  'edit_tool',
-  'write_tool',
-]);
+// 工具的只读/变更属性由 ToolMetadata.readOnly 权威定义（见 core/types/tools.ts）。
+// 此处不再维护硬编码工具名集合，避免与实际注册的工具名不一致。
+// 历史问题：旧版使用 read_tool/edit_tool 等名称，但实际注册的是 Read/Edit/Grep 等，
+// 导致幂等性检测完全失效。改为动态查询 ToolMetadata 后自动适配所有工具。
 
 // ── 类型定义 ──────────────────────────────────────────────────────
 
@@ -111,10 +97,13 @@ function makeSignature(toolName: string, args: Record<string, unknown> | undefin
   return { toolName, argsHash: sha256(canonical) };
 }
 
-/** 判断工具是否为幂等（只读） */
+/**
+ * 判断工具是否为幂等（只读）。
+ * 从 ToolMetadata.readOnly 动态查询，未注册元数据的工具默认视为非幂等（保守策略）。
+ */
 function isIdempotent(toolName: string): boolean {
-  if (MUTATING_TOOLS.has(toolName)) return false;
-  return IDEMPOTENT_TOOLS.has(toolName);
+  const metadata = toolRegistry.getMetadata(toolName);
+  return metadata?.readOnly === true;
 }
 
 /** 判断工具调用结果是否表示失败 */

@@ -12,6 +12,7 @@ import { sanitizeSearchPath } from '../pathSecurity.js';
 
 export const lsToolHandler: ToolHandler = {
   name: 'Glob',
+  metadata: { readOnly: true, mutating: false, categories: ['filesystem'] },
 
   /** 有 pattern 时走 find 逻辑，否则走 ls 逻辑 */
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolCallResult> {
