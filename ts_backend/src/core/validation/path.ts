@@ -61,7 +61,13 @@ export function validateCommonPath(filePath: string, memoryRoot: string): PathVa
     return { resolvedPath: null, error: PATH_UNSAFE };
   }
 
-  if (filePath && (path.isAbsolute(filePath) || filePath.startsWith('/'))) {
+  // 跨平台绝对路径检查：Linux CI 上 path.isAbsolute('C:\\Windows') 会返回 false，
+  // 因此额外识别 Windows 盘符路径，避免路径遍历绕过
+  const windowsAbsolutePattern = /^[A-Za-z]:[\\/]/;
+  if (
+    filePath &&
+    (path.isAbsolute(filePath) || filePath.startsWith('/') || windowsAbsolutePattern.test(filePath))
+  ) {
     return { resolvedPath: null, error: PATH_UNSAFE };
   }
 

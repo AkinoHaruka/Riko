@@ -20,12 +20,8 @@ import type {
   NormalizedModel,
   NormalizedMessage,
   NormalizedToolCall,
-  NormalizedUsage,
   NormalizedTool,
 } from './types.js';
-import { createLogger } from '../../logger/index.js';
-
-const logger = createLogger('AnthropicTransport');
 
 /** Anthropic Transport 实现 */
 export class AnthropicTransport implements ProviderTransport {
