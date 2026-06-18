@@ -57,6 +57,8 @@ Thumbs.db
 
 # Logs
 /ts_backend/logs/
+flutter_analyze.log
+*.log
 
 # Temp files
 tmp_*.json
