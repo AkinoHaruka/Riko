@@ -3,10 +3,25 @@
  *
  * 覆盖 Unicode 清洗、威胁模式扫描、工具调用护栏三大安全能力。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { sanitizeUnicode, sanitizeUnicodeRecursive } from '../../../src/core/security/sanitization.js';
 import { scanForThreats, firstThreatMessage } from '../../../src/core/security/threatPatterns.js';
 import { ToolCallGuardrailController, buildGuardrailSyntheticResult } from '../../../src/core/security/toolGuardrails.js';
+import { toolRegistry } from '../../../src/tools/registry.js';
+
+// 注册测试用工具的元数据，使 isIdempotent 能正确识别只读工具
+beforeAll(() => {
+  toolRegistry.register({
+    name: 'read_tool',
+    metadata: { readOnly: true, mutating: false },
+    execute: () => ({ success: true }),
+  });
+  toolRegistry.register({
+    name: 'edit_tool',
+    metadata: { readOnly: false, mutating: true },
+    execute: () => ({ success: true }),
+  });
+});
 
 // ── Unicode 清洗 ──────────────────────────────────────────────────
 

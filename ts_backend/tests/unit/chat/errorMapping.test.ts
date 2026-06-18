@@ -38,16 +38,22 @@ describe('mapApiError', () => {
     expect(result.message).toContain('内部错误');
   });
 
-  it('503 → 服务暂时不可用', () => {
+  it('503 → 服务过载（可降级）', () => {
     const result = mapApiError(makeOpenAiError(503));
     expect(result.statusCode).toBe(503);
-    expect(result.message).toContain('暂时不可用');
+    expect(result.message).toContain('过载');
   });
 
-  it('400 → 请求参数错误', () => {
+  it('400 → 无关键词匹配时返回默认消息', () => {
     const result = mapApiError(makeOpenAiError(400));
     expect(result.statusCode).toBe(400);
-    expect(result.message).toContain('参数错误');
+    expect(result.message).toBe('AI API 调用失败，请稍后重试');
+  });
+
+  it('400 含 context length → 上下文过长', () => {
+    const result = mapApiError(makeOpenAiError(400, 'context length exceeded'));
+    expect(result.statusCode).toBe(400);
+    expect(result.message).toContain('上下文过长');
   });
 
   it('403 → 无权访问', () => {
@@ -65,18 +71,18 @@ describe('mapApiError', () => {
   it('非对象错误 → 返回 500 和默认消息', () => {
     const result = mapApiError('something went wrong');
     expect(result.statusCode).toBe(500);
-    expect(result.message).toBe('AI API 调用失败');
+    expect(result.message).toBe('AI API 调用失败，请稍后重试');
   });
 
   it('null 错误 → 返回 500 和默认消息', () => {
     const result = mapApiError(null);
     expect(result.statusCode).toBe(500);
-    expect(result.message).toBe('AI API 调用失败');
+    expect(result.message).toBe('AI API 调用失败，请稍后重试');
   });
 
   it('无 status 属性的对象 → 返回 500 和默认消息', () => {
     const result = mapApiError({ message: 'no status field' });
     expect(result.statusCode).toBe(500);
-    expect(result.message).toBe('AI API 调用失败');
+    expect(result.message).toBe('AI API 调用失败，请稍后重试');
   });
 });
