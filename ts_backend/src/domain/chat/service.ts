@@ -12,9 +12,10 @@ import { buildMemorySearchToolDefinition, buildEditToolDefinition, buildWriteToo
 import type { ChatCompletionRequest, ChatMessage } from './types.js';
 import { streamResponse } from './stream.js';
 import { nonStreamingToolCallLoop } from './toolCallLoop.js';
+import { resetToolGuardrails } from './toolHandler.js';
 import { getOrCreateClient, getTransportForModel, resolveProvider } from '../../core/ai/client.js';
 import { mapApiError } from '../../core/ai/errors.js';
-import { getAllModels, getProviderModels } from '../../core/ai/providers/index.js';
+import { getAllModels } from '../../core/ai/providers/index.js';
 import { createLogger } from '../../core/logger/index.js';
 
 const logger = createLogger('ChatService');
@@ -47,6 +48,8 @@ export async function* chatCompletionStream(
   request: ChatCompletionRequest,
   userId: string,
 ): AsyncGenerator<string> {
+  // 每次请求重置护栏状态，避免上一轮 halt 决策污染本次对话
+  resetToolGuardrails();
   const mainPrompt = loadMainPrompt(userId);
   const toolRules = loadToolRules();
   const persistentMemory = loadPersistentMemory();
@@ -93,6 +96,8 @@ export async function chatCompletionNonStream(
   request: ChatCompletionRequest,
   userId: string,
 ): Promise<Record<string, unknown>> {
+  // 每次请求重置护栏状态，避免上一轮 halt 决策污染本次对话
+  resetToolGuardrails();
   const mainPrompt = loadMainPrompt(userId);
   const toolRules = loadToolRules();
   const persistentMemory = loadPersistentMemory();
@@ -160,7 +165,7 @@ export async function chatCompletionNonStream(
  * @returns 模型列表
  */
 export async function listModels(
-  userId: string,
+  _userId: string,
 ): Promise<Array<{ id: string; name: string; owned_by: string }>> {
   const now = Date.now();
   if (modelsCache && now - modelsCacheTime < MODELS_CACHE_TTL_MS) {

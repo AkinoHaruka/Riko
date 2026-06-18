@@ -4,7 +4,7 @@
  * 锁文件存储当前持有进程的 PID，通过 mtime 判断锁是否过期（stale）。
  */
 import fs from 'fs';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { createLogger } from '../../core/logger/index.js';
 import { getAutoDreamLockPath, getAutoDreamRoot } from '../../memoryStorage/paths.js';
 import { getAutoDreamConfig } from '../../config/index.js';
@@ -15,13 +15,20 @@ const logger = createLogger('DreamLock');
 /**
  * 检测指定 PID 对应的进程是否仍在运行。
  * Windows 上使用 tasklist 命令，其他平台使用 process.kill(pid, 0) 探测。
+ * @security 使用 execFileSync + 参数数组防止命令注入；
+ *           pid 必须为正整数，非整数直接返回 false。
  * @param pid - 待检测的进程 ID
  */
 function isProcessRunning(pid: number): boolean {
+  // @security pid 校验：必须为正整数，拒绝小数、负数、NaN
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
   try {
     // Windows 上 process.kill(pid, 0) 行为不可靠，改用 tasklist 命令检测
+    // @security 使用 execFileSync + 参数数组，避免命令注入
     if (process.platform === 'win32') {
-      const output = execSync(`tasklist /FI "PID eq ${pid}" /NH`, {
+      const output = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH'], {
         encoding: 'utf-8',
         timeout: 3000,
         windowsHide: true,

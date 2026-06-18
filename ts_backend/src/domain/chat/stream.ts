@@ -9,8 +9,7 @@
 import { APIError, default as OpenAI } from 'openai';
 import type { ChatCompletionCreateParamsStreaming } from 'openai/resources/chat/completions/completions.js';
 import { getOrCreateClient, getTransportForModel, resolveProvider } from '../../core/ai/client.js';
-import type { ProviderTransport, NormalizedStreamChunk, NormalizedMessage, NormalizedTool } from '../../core/ai/providers/index.js';
-import { OpenAICompatibleTransport } from '../../core/ai/providers/index.js';
+import type { ProviderTransport } from '../../core/ai/providers/index.js';
 import { mapApiError } from '../../core/ai/errors.js';
 import { createLogger } from '../../core/logger/index.js';
 import {
@@ -19,7 +18,7 @@ import {
   SSE_EVENT_FULL_REQUEST,
   SSE_EVENT_WAITING,
 } from './types.js';
-import { formatSseEvent, streamingToolCallLoop } from './toolCallLoop.js';
+import { formatSseEvent, streamingToolCallLoop, streamingToolCallLoopTransport } from './toolCallLoop.js';
 import { runPostSamplingHooks } from './postSampling.js';
 
 const logger = createLogger('Stream');
@@ -60,7 +59,7 @@ async function* streamResponseOpenAI(
   params: Record<string, unknown>,
   userId: string,
   conversationId?: string,
-  modelId?: string,
+  _modelId?: string,
 ): AsyncGenerator<string> {
   let client: OpenAI;
   try {
@@ -217,37 +216,17 @@ async function* streamResponseTransport(
   }, 8000);
 
   try {
-    const stream = transport.createStreamingChat({ ...chatParams, stream: true });
-
-    for await (const chunk of stream) {
-      if (!hasReceivedFirstChunk) {
-        hasReceivedFirstChunk = true;
-      }
-
-      // drain 等待事件
-      while (pendingWaitingEvents.length > 0) {
-        yield pendingWaitingEvents.shift()!;
-      }
-
-      // 将归一化流式块转换为 SSE 事件
-      switch (chunk.type) {
-        case 'content':
-          yield formatSseEvent('content', chunk.content);
-          break;
-        case 'reasoning':
-          yield formatSseEvent('reasoning_content', chunk.content);
-          break;
-        case 'tool_call_delta':
-          yield formatSseEvent('tool_call', '正在调用工具...');
-          break;
-        case 'usage':
-          yield formatSseEvent('usage', undefined, chunk.usage as unknown as Record<string, unknown>);
-          break;
-        case 'finish':
-          yield formatSseEvent('finish', undefined, { finish_reason: chunk.finishReason });
-          break;
-      }
-    }
+    // 委托给 Transport 流式多轮工具调用循环
+    const loopStats = { toolCallCount: 0 };
+    yield* streamingToolCallLoopTransport(
+      transport,
+      chatParams,
+      conversationId,
+      undefined, // 使用默认 maxTurns
+      () => { hasReceivedFirstChunk = true; },
+      pendingWaitingEvents,
+      loopStats,
+    );
 
     // 后采样钩子
     if (conversationId != null) {
@@ -258,7 +237,7 @@ async function* streamResponseTransport(
             conversationId,
             userId,
             model: resolvedModel,
-            toolCallCountThisTurn: 0,
+            toolCallCountThisTurn: loopStats.toolCallCount,
           },
           (eventData: string) => {
             hookEvents.push(eventData);

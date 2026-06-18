@@ -10,7 +10,6 @@ import { createLogger } from '../../core/logger/index.js';
 import { HttpError } from '../../core/utils/index.js';
 import { invalidateClientCache } from '../../core/ai/client.js';
 import { getProviderById, getAllProviders } from '../../core/ai/providers/index.js';
-import type { ProviderDefinition } from '../../core/ai/providers/index.js';
 import { loadMainPrompt } from '../../prompts/index.js';
 import { getDb } from '../../core/database/index.js';
 import * as repo from './repository.js';

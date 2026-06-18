@@ -28,6 +28,7 @@ import {
   migrateConversationBackground,
   migrateSessionNotesState,
   migrateMemoriesUserId,
+  migrateMemoriesUniqueConstraint,
   migrateToV1,
 } from './migrations.js';
 
@@ -132,6 +133,19 @@ export async function initDb(): Promise<void> {
       if (currentVersion === 0 && !existed) {
         nativeDb.pragma('user_version = 1');
       }
+
+      // memories UNIQUE 约束迁移：清理重复数据并创建唯一索引
+      // @security 迁移前备份数据库，防止清理操作导致数据丢失
+      if (existed) {
+        try {
+          const backupPath = `${dbPath}.backup.${Date.now()}`;
+          fs.copyFileSync(dbPath, backupPath);
+          console.log(`[Database] 迁移前备份: ${backupPath}`);
+        } catch (backupError) {
+          console.warn('[Database] 迁移前备份失败，继续执行迁移:', backupError);
+        }
+      }
+      migrateMemoriesUniqueConstraint(nativeDb);
 
       for (const idx of CREATE_INDEXES) {
         nativeDb.exec(idx);

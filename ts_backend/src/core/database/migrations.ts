@@ -63,6 +63,55 @@ export function migrateMemoriesUserId(db: DatabaseType): void {
 }
 
 /**
+ * 迁移：为 memories 表添加 (user_id, key) UNIQUE 约束。
+ *
+ * @security 防止并发 upsert 竞态导致重复数据。
+ *           迁移前清理已存在的重复记录（保留 created_at 最新的一条）。
+ *           迁移幂等：索引已存在时跳过。
+ *
+ * @param db - 数据库实例
+ */
+export function migrateMemoriesUniqueConstraint(db: DatabaseType): void {
+  // 检查索引是否已存在（幂等性）
+  const existingIndex = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memories_user_key_unique'")
+    .get() as { name: string } | undefined;
+
+  if (existingIndex) {
+    return;
+  }
+
+  const txn = db.transaction(() => {
+    // 清理重复数据：同 (user_id, key) 保留 created_at 最新的一条
+    // 使用 ROW_NUMBER 窗口函数（SQLite 3.25+ 支持）
+    db.exec(`
+      DELETE FROM memories
+      WHERE id NOT IN (
+        SELECT id FROM (
+          SELECT id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY user_id, key
+                   ORDER BY created_at DESC
+                 ) AS rn
+          FROM memories
+        ) WHERE rn = 1
+      )
+    `);
+
+    // 创建 UNIQUE 索引
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_user_key_unique ON memories(user_id, key)');
+  });
+
+  try {
+    txn();
+    console.log('[Migration] memories UNIQUE 约束迁移完成');
+  } catch (error) {
+    // 窗口函数不支持或清理失败时，仅创建索引（可能因重复数据失败）
+    console.warn('[Migration] memories UNIQUE 约束迁移失败，跳过:', error);
+  }
+}
+
+/**
  * 迁移：为 conversations 表添加 background 列。
  * 仅在列不存在时执行 ALTER TABLE，保证幂等性。
  */

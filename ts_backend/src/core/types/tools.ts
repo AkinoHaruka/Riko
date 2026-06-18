@@ -16,6 +16,16 @@ export interface ToolContext {
   memoryRoot: string;
 }
 
+/** 工具元数据，用于工具策略过滤、并发分区和护栏判断 */
+export interface ToolMetadata {
+  /** 是否为只读工具（不修改任何状态） */
+  readOnly: boolean;
+  /** 是否为变更工具（修改文件/状态） */
+  mutating: boolean;
+  /** 工具分类标签，用于策略过滤（如 'filesystem'、'memory'、'skill'） */
+  categories?: string[];
+}
+
 /** 工具调用结果 */
 export interface ToolCallResult {
   /** 工具执行是否成功 */
@@ -30,6 +40,8 @@ export interface ToolHandler {
   name: string;
   /** 可选的执行权限要求，未设置则所有已认证用户均可调用 */
   requiredRole?: string;
+  /** 工具元数据，用于策略过滤、并发分区和护栏判断 */
+  metadata?: ToolMetadata;
   /** 可选的前置参数校验，在 execute 之前调用 */
   validate?(
     args: Record<string, unknown>,
@@ -45,6 +57,8 @@ export interface ToolRegistry {
   register(handler: ToolHandler): void;
   /** 按名称查找工具处理器 */
   get(name: string): ToolHandler | undefined;
+  /** 按名称查找工具元数据 */
+  getMetadata(name: string): ToolMetadata | undefined;
   /** 判断工具是否已注册 */
   has(name: string): boolean;
   /** 列出所有已注册工具的名称 */

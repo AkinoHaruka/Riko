@@ -91,15 +91,10 @@ async function syncEnvApiKey(): Promise<void> {
       return;
     }
 
-    // 优先加密存储，密钥无效时回退为明文
+    // @security 密钥始终有效（encryption.ts 自动生成机制保证），直接加密存储
     const { encrypt: encryptValue } = await import('./core/encryption/index.js');
-    const { isEncryptionKeyValid } = await import('./config/index.js');
-    let storedValue = envKey;
-    let isEncrypted = 0;
-    if (isEncryptionKeyValid()) {
-      storedValue = encryptValue(envKey);
-      isEncrypted = 1;
-    }
+    const storedValue = encryptValue(envKey);
+    const isEncrypted = 1;
 
     const settingId = generateId('settings');
     db.prepare(
@@ -109,6 +104,56 @@ async function syncEnvApiKey(): Promise<void> {
     logger.info('[启动] 已从 .env 同步 API Key 到数据库');
   } catch (err) {
     logger.error(err, '[启动] 同步 API Key 失败');
+  }
+}
+
+/**
+ * @security 迁移历史明文敏感数据为加密存储。
+ *
+ * 扫描 settings 表中 is_encrypted=0 且 key 在 sensitiveKeys 列表中的记录，
+ * 重新加密 value 并更新 is_encrypted=1。
+ *
+ * 触发场景：旧版本明文存储的 API Key，升级到新版本后自动迁移为加密存储。
+ */
+async function migratePlaintextSettings(): Promise<void> {
+  try {
+    const db = getDb();
+    const { encryptionConfig } = await import('./config/index.js');
+    const { encrypt: encryptValue } = await import('./core/encryption/index.js');
+
+    // 查询所有明文存储的敏感设置
+    const placeholders = encryptionConfig.sensitiveKeys.map(() => '?').join(',');
+    const plaintextRows = db
+      .prepare(
+        `SELECT id, key, value FROM settings WHERE is_encrypted = 0 AND key IN (${placeholders})`,
+      )
+      .all(...encryptionConfig.sensitiveKeys) as { id: string; key: string; value: string }[];
+
+    if (plaintextRows.length === 0) {
+      return;
+    }
+
+    logger.info('[安全] 发现 %d 条明文敏感数据，开始迁移为加密存储', plaintextRows.length);
+
+    const updateStmt = db.prepare(
+      'UPDATE settings SET value = ?, is_encrypted = 1 WHERE id = ?',
+    );
+
+    const migrateTxn = db.transaction(() => {
+      for (const row of plaintextRows) {
+        try {
+          const encryptedValue = encryptValue(row.value);
+          updateStmt.run(encryptedValue, row.id);
+        } catch (err) {
+          logger.error('[安全] 迁移明文设置失败 (id=%s, key=%s): %s', row.id, row.key, err);
+        }
+      }
+    });
+
+    migrateTxn();
+    logger.info('[安全] 明文敏感数据迁移完成，共迁移 %d 条', plaintextRows.length);
+  } catch (err) {
+    logger.error(err, '[安全] 明文敏感数据迁移失败');
   }
 }
 
@@ -352,20 +397,19 @@ async function bootstrap(): Promise<void> {
         logger.warn('[安全] JWT_SECRET 仍为默认值，请在生产环境中修改！当前配置存在严重安全隐患。');
       }
 
-      const { isEncryptionKeyValid } = await import('./config/index.js');
-      if (!isEncryptionKeyValid()) {
-        logger.warn('[安全] ENCRYPTION_KEY 未配置或长度不足 32 字节，API Key 将以明文存储！');
-      } else {
-        // 检测已知的弱/默认加密密钥
-        const { encryptionConfig } = await import('./config/index.js');
-        const WEAK_KEYS = [
-          '0123456789abcdef0123456789abcdef',
-          'generate-a-32-byte-hex-key-for-production',
-        ];
-        if (WEAK_KEYS.includes(encryptionConfig.encryptionKey)) {
-          logger.warn('[安全] ENCRYPTION_KEY 使用了已知的弱/默认密钥，生产环境请更换为随机 32 字节密钥！');
-        }
+      // @security 加密密钥现在由 encryption.ts 自动生成，始终有效
+      // 仅检测已知的弱/默认密钥
+      const { encryptionConfig } = await import('./config/index.js');
+      const WEAK_KEYS = [
+        '0123456789abcdef0123456789abcdef',
+        'generate-a-32-byte-hex-key-for-production',
+      ];
+      if (WEAK_KEYS.includes(encryptionConfig.encryptionKey)) {
+        logger.warn('[安全] ENCRYPTION_KEY 使用了已知的弱/默认密钥，生产环境请更换为随机 32 字节密钥！');
       }
+
+      // @security 迁移历史明文敏感数据为加密存储
+      await migratePlaintextSettings();
     } catch (err) {
       logger.error(err, '[启动] 后台初始化失败');
     }
