@@ -17,6 +17,8 @@ import type { FastifyInstance } from 'fastify';
 import { buildE2EApp, teardownE2EApp, registerAndLogin } from './helpers.js';
 
 // 模拟 AI 客户端，避免调用真实 DeepSeek API
+// 注意：mock 必须导出源模块的所有被引用符号，否则会触发 vitest 警告
+// "No X export is defined on the mock"。stream.ts/service.ts 还引用了 resolveProvider。
 vi.mock('../../src/core/ai/client.js', () => ({
   getOrCreateClient: vi.fn(),
   getUserApiKey: vi.fn().mockResolvedValue('sk-test-mock-key'),
@@ -35,6 +37,20 @@ vi.mock('../../src/core/ai/client.js', () => ({
       }),
     },
   }),
+  // resolveProvider: 根据模型 ID 返回 ProviderDefinition，测试中返回最小可用结构
+  resolveProvider: vi.fn().mockReturnValue({
+    id: 'deepseek',
+    name: 'DeepSeek',
+    aliases: ['deepseek'],
+    apiMode: 'openai-compatible',
+    baseUrl: 'https://api.deepseek.com',
+    apiKeyKey: 'apikey_deepseek',
+    envVarKey: 'DEEPSEEK_API_KEY',
+    supportsThinking: true,
+    supportsToolCalls: true,
+    models: [],
+  }),
+  getTransportForModel: vi.fn().mockReturnValue('openai'),
 }));
 
 // ── SSE 流式对话 ──

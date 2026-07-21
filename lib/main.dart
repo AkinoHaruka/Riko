@@ -6,7 +6,8 @@
 /// 1. 初始化 Flutter 引擎绑定
 /// 2. 修补 flutter_markdown 0.7.7 已知 bug（空 inline 断言错误）
 /// 3. 桌面平台：配置无框透明窗口（1280×720，最小 320×240）
-/// 4. 启动后端进程（桌面由外部启动，移动端通过 proot 启动）
+/// 4. 启动后端进程（桌面由外部启动，移动端通过 proot 启动），
+///    失败时仅记录日志，不阻断 runApp（移动端 App 内部有就绪探测 UI 兜底）
 /// 5. 统一使用单一 runApp，移动端在 App 内部等待后端就绪
 ///
 /// 后端就绪探测（仅移动端，在 App 内部执行）：
@@ -25,6 +26,18 @@ import 'package:window_manager/window_manager.dart';
 import 'app.dart';
 import 'platform/backend_runner.dart';
 
+/// 判断是否为 flutter_markdown 0.7.7 已知 _inlines.isEmpty 断言 bug
+///
+/// 通过检查异常字符串和 stack trace 来源，确认来自 flutter_markdown 包内部
+/// 才返回 true，避免吞掉其他真实的 _inlines.isEmpty 错误。
+bool _isMarkdownInlineBug(FlutterErrorDetails details) {
+  final message = details.exceptionAsString();
+  if (!message.contains('_inlines.isEmpty')) return false;
+  // stack 中需包含 flutter_markdown 包路径，确保异常来源正确
+  final stack = details.stack?.toString() ?? '';
+  return stack.contains('flutter_markdown') || stack.contains('markdown.dart');
+}
+
 /// RIKO 应用入口
 ///
 /// 初始化 Flutter 引擎、桌面窗口（设置无框+透明背景），
@@ -33,14 +46,14 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // flutter_markdown 0.7.7 已知 bug：段落拆分后空 inline 触发断言
-  // 此处拦截该错误，避免应用崩溃
+  // 仅在异常确实来自 flutter_markdown 包内部时才吞掉，避免掩盖其他真实问题
   final originalOnError = FlutterError.onError;
   FlutterError.onError = (FlutterErrorDetails details) {
-    if (details.exceptionAsString().contains('_inlines.isEmpty')) return;
+    if (_isMarkdownInlineBug(details)) return;
     originalOnError?.call(details);
   };
   ErrorWidget.builder = (FlutterErrorDetails details) {
-    if (details.exceptionAsString().contains('_inlines.isEmpty')) {
+    if (_isMarkdownInlineBug(details)) {
       return const SizedBox.shrink();
     }
     return ErrorWidget(details.exception);
@@ -66,7 +79,21 @@ Future<void> main() async {
     await windowManager.show();
   }
 
-  BackendRunner.start();
+  // 启动后端进程：
+  // - 桌面平台：直接返回 true（后端由外部脚本启动）
+  // - 移动平台：通过 MethodChannel 调用原生层，可能因 proot 损坏/Node.js 缺失等失败
+  //
+  // 失败处理：仅记录日志，不阻断 runApp。移动端 App 内部有后端就绪探测 UI，
+  // 启动失败时用户会看到"等待后端就绪"超时提示，可重新触发引导。
+  try {
+    final ok = await BackendRunner.start();
+    if (!ok) {
+      debugPrint('警告：后端启动失败，应用将在等待后端就绪时超时');
+    }
+  } catch (e) {
+    // 兜底：即使 BackendRunner.start 内部已捕获，也防止未预期异常阻断 runApp
+    debugPrint('后端启动异常（已被吞掉，应用继续启动）: $e');
+  }
 
   // 统一使用单一 runApp，移动端在 App 内部等待后端就绪
   runApp(const ProviderScope(child: App()));

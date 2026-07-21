@@ -360,13 +360,14 @@ class _DynamicIslandState extends ConsumerState<DynamicIsland>
   }
 
   /// 紧凑态文本样式 — 与 [_measureCompactWidth] 保持完全一致
+  ///
+  /// 不指定 height，使用字体默认行高，避免中文字体在固定行高内绘制偏下。
   static const _compactTextStyle = TextStyle(
     color: AppColors.textPrimary,
     fontSize: 13,
     fontWeight: FontWeight.w500,
     fontFamily: AppTypography.fontFamily,
     fontFamilyFallback: AppTypography.fontFamilyFallback,
-    height: 1.0, // 消除额外行高，让文字在胶囊内精确垂直居中
   );
 
   /// 展开态头部文本样式
@@ -376,13 +377,12 @@ class _DynamicIslandState extends ConsumerState<DynamicIsland>
     fontWeight: FontWeight.w600,
     fontFamily: AppTypography.fontFamily,
     fontFamilyFallback: AppTypography.fontFamilyFallback,
-    height: 1.0,
   );
 
   /// 紧凑态：仅显示状态圆点和动态标签
   ///
-  /// Row 使用 mainAxisSize.min 自适应内容宽度，文字不截断（宽度由 _measureCompactWidth 保证够用）。
-  /// 圆点和文字都用 Center 包裹并强制同一高度，确保视觉中心严格对齐。
+  /// Row 撑满外部 Container 高度，文字和圆点在整行内垂直居中，
+  /// 避免用矮 box 框住文字后受字体 ascent/descent 影响导致视觉偏下。
   Widget _buildCompact({
     required Key key,
     required Color statusColor,
@@ -397,23 +397,15 @@ class _DynamicIslandState extends ConsumerState<DynamicIsland>
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SizedBox(
-            height: 13,
-            child: Center(
-              child: _PulsingStatusDot(
-                color: statusColor,
-                pulse: _pulse,
-                isPulsing: _pulseController.isAnimating,
-              ),
+          Center(
+            child: _PulsingStatusDot(
+              color: statusColor,
+              pulse: _pulse,
+              isPulsing: _pulseController.isAnimating,
             ),
           ),
           const SizedBox(width: 8),
-          SizedBox(
-            height: 13,
-            child: Center(
-              child: Text('璃 · $compactLabel', style: _compactTextStyle),
-            ),
-          ),
+          Center(child: Text('璃 · $compactLabel', style: _compactTextStyle)),
         ],
       ),
     );
@@ -433,19 +425,25 @@ class _DynamicIslandState extends ConsumerState<DynamicIsland>
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              _PulsingStatusDot(
-                color: statusColor,
-                pulse: _pulse,
-                isPulsing: _pulseController.isAnimating,
+              Center(
+                child: _PulsingStatusDot(
+                  color: statusColor,
+                  pulse: _pulse,
+                  isPulsing: _pulseController.isAnimating,
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  '璃 · $tokenText',
-                  style: _expandedHeaderTextStyle,
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '璃 · $tokenText',
+                    style: _expandedHeaderTextStyle,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                 ),
               ),
               const SizedBox(width: 4),

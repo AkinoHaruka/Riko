@@ -86,8 +86,8 @@ class _AdminPageState extends ConsumerState<AdminPage> {
   Widget _buildServerCard(McpConnectionInfo server) {
     final statusColor = _statusColor(server.status);
     final statusLabel = _statusLabel(server.status);
-    final transportLabel = 'stdio';
-    final transportColor = AppColors.warning; // stdio 用黄色标签
+    const transportLabel = 'stdio';
+    const transportColor = AppColors.warning; // stdio 用黄色标签
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

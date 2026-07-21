@@ -345,7 +345,7 @@ class _TerminalPanelState extends ConsumerState<TerminalPanel>
                             : TerminalPanelColors.requestYellow,
                         fontSize: 11,
                         fontFamily: 'Consolas',
-                        fontFamilyFallback: ['Cascadia Code', 'monospace'],
+                        fontFamilyFallback: const ['Cascadia Code', 'monospace'],
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),

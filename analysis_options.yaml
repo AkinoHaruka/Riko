@@ -10,3 +10,8 @@ linter:
     prefer_single_quotes: true
     avoid_print: true
     prefer_const_constructors: true
+    # 第 1 批新增规则（低风险，主要用于改善集合判空与 const 优化）
+    prefer_is_empty: true
+    prefer_is_not_empty: true
+    prefer_const_declarations: true
+    prefer_const_literals_to_create_immutables: true

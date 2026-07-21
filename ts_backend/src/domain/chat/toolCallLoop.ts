@@ -215,6 +215,7 @@ async function* processStreamChunks(
  * @param onFirstChunk - 收到首个 chunk 时的回调
  * @param pendingEvents - 外部等待事件队列
  * @param stats - 可变引用对象，循环结束后记录总工具调用数
+ * @param userId - 当前用户 ID（可选），传入工具上下文用于数据隔离
  */
 export async function* streamingToolCallLoop(
   client: OpenAI,
@@ -224,6 +225,7 @@ export async function* streamingToolCallLoop(
   onFirstChunk?: () => void,
   pendingEvents?: string[],
   stats?: { toolCallCount: number },
+  userId?: string,
 ): AsyncGenerator<string> {
   const { stream: _stream, ...baseParams } = params;
   const memoryRoot = env.MEMORY_ROOT_DIR;
@@ -281,7 +283,7 @@ export async function* streamingToolCallLoop(
     // ── 执行工具调用 ──
     // 从 params.tools 中提取允许的工具名称白名单
     const allowedTools = extractAllowedTools(params.tools);
-    const toolResults = await executeToolCalls(toolCallsAccumulator, conversationId, memoryRoot, allowedTools);
+    const toolResults = await executeToolCalls(toolCallsAccumulator, conversationId, memoryRoot, allowedTools, userId);
     const allToolCalls = Object.keys(toolCallsAccumulator)
       .sort((a, b) => Number(a) - Number(b))
       .map((idx) => toolCallsAccumulator[Number(idx)]);
@@ -329,6 +331,7 @@ export async function* streamingToolCallLoop(
  * @param params - 原始 API 请求参数（含 tools）
  * @param conversationId - 会话 ID，为空时跳过工具执行
  * @param maxTurns - 最大轮次数，默认 5
+ * @param userId - 当前用户 ID（可选），传入工具上下文用于数据隔离
  * @returns 最终的非流式响应
  */
 export async function nonStreamingToolCallLoop(
@@ -336,6 +339,7 @@ export async function nonStreamingToolCallLoop(
   params: Record<string, unknown>,
   conversationId?: string,
   maxTurns: number = CHAT_DEFAULT_MAX_TURNS,
+  userId?: string,
 ): Promise<Record<string, unknown>> {
   const { stream: _stream, ...baseParams } = params;
   const memoryRoot = env.MEMORY_ROOT_DIR;
@@ -388,7 +392,7 @@ export async function nonStreamingToolCallLoop(
       }
     });
 
-    const toolResults = await executeToolCalls(toolCallsAccumulator, conversationId, memoryRoot);
+    const toolResults = await executeToolCalls(toolCallsAccumulator, conversationId, memoryRoot, undefined, userId);
     const toolResultMessages = buildToolResultMessages(toolCallsAccumulator, toolResults);
 
     if (message) {
@@ -474,6 +478,7 @@ function accumulateNormalizedToolCall(
  * @param onFirstChunk - 收到首个 chunk 时的回调
  * @param pendingEvents - 外部等待事件队列
  * @param stats - 可变引用对象，循环结束后记录总工具调用数
+ * @param userId - 当前用户 ID（可选），传入工具上下文用于数据隔离
  */
 export async function* streamingToolCallLoopTransport(
   transport: ProviderTransport,
@@ -483,6 +488,7 @@ export async function* streamingToolCallLoopTransport(
   onFirstChunk?: () => void,
   pendingEvents?: string[],
   stats?: { toolCallCount: number },
+  userId?: string,
 ): AsyncGenerator<string> {
   const memoryRoot = env.MEMORY_ROOT_DIR;
   // 复制消息列表，循环中会追加 assistant 和 tool 消息
@@ -585,6 +591,7 @@ export async function* streamingToolCallLoopTransport(
       conversationId,
       memoryRoot,
       allowedTools,
+      userId,
     );
     const allToolCalls = Object.keys(toolCallsAccumulator)
       .sort((a, b) => Number(a) - Number(b))

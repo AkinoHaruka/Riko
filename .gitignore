@@ -36,6 +36,7 @@ Thumbs.db
 # Environment
 .env
 .env.*
+!.env.example
 
 # Temp
 .tmp-proot/
@@ -79,3 +80,7 @@ ts_backend/DESIGN.md
 # Claude Code internal
 .claude/
 .trae/
+
+# External / non-Riko directories (local tooling & side projects)
+.workbuddy/
+ai-ux-explorer/

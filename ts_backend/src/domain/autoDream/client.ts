@@ -43,8 +43,10 @@ export async function executeDreamSubAgent(
   };
 
   const executor = new SubAgentExecutor();
+  // 透传 toolContext（含 userId 字段，便于子代理内工具调用执行数据隔离）
   return executor.execute(config, promptParts, userId, {
     conversationId: toolContext.conversationId,
     memoryRoot: toolContext.memoryRoot,
+    userId: toolContext.userId,
   });
 }

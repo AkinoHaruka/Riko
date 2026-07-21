@@ -42,8 +42,11 @@ const transportCache = new Map<string, CachedTransport>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_SIZE = 100;
 
-/** 定时清理过期缓存条目 */
-setInterval(() => {
+/**
+ * 定时清理过期缓存条目。
+ * unref() 使该定时器不阻止 Node.js 进程退出（否则进程会因活跃句柄而无法正常终止）。
+ */
+const cacheCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of transportCache) {
     if (entry.expireAt <= now) {
@@ -51,8 +54,23 @@ setInterval(() => {
     }
   }
 }, CACHE_TTL_MS);
+cacheCleanupTimer.unref?.();
 
 // ─── API Key 读取 ───
+
+/**
+ * 获取用户为指定 Provider 配置的自定义 Base URL。
+ * 前端设置页将自定义地址存为 `base_url_{providerId}`（明文，非敏感）。
+ * 返回空表示未配置，使用 Provider 注册的默认 baseUrl。
+ */
+function getUserBaseUrl(userId: string, provider: ProviderDefinition): string | null {
+  const db = getDb();
+  const row = db
+    .prepare('SELECT value FROM settings WHERE user_id = ? AND key = ?')
+    .get(userId, `base_url_${provider.id}`) as { value: string } | undefined;
+  const value = row?.value?.trim();
+  return value ? value : null;
+}
 
 /**
  * 获取用户在设置中配置的指定 Provider 的 API Key。
@@ -105,18 +123,24 @@ export async function resolveApiKey(userId: string, provider: ProviderDefinition
 // ─── Transport 创建 ───
 
 /**
- * 根据 Provider 定义和 API Key 创建对应的 Transport 实例
+ * 根据 Provider 定义和 API Key 创建对应的 Transport 实例。
+ * @param baseUrlOverride - 用户自定义 baseUrl，优先于 Provider 注册默认值
  */
-export function createTransport(provider: ProviderDefinition, apiKey: string): ProviderTransport {
+export function createTransport(
+  provider: ProviderDefinition,
+  apiKey: string,
+  baseUrlOverride?: string,
+): ProviderTransport {
+  const baseUrl = baseUrlOverride?.trim() || provider.baseUrl;
   switch (provider.apiMode) {
     case 'openai-compatible':
       return new OpenAICompatibleTransport(
-        provider.baseUrl,
+        baseUrl,
         apiKey,
         provider.id === 'deepseek',
       );
     case 'anthropic-messages':
-      return new AnthropicTransport(apiKey, provider.baseUrl);
+      return new AnthropicTransport(apiKey, baseUrl);
     case 'google-generative-ai':
       return new GeminiTransport(apiKey);
     default:
@@ -147,7 +171,13 @@ export function resolveProvider(modelId: string): ProviderDefinition {
  */
 export function invalidateClientCache(userId: string, providerId?: string): void {
   if (providerId) {
-    transportCache.delete(`${userId}:${providerId}`);
+    // 缓存键格式为 userId:providerId:baseUrl，前缀匹配清除该 Provider 的所有 baseUrl 变体
+    const prefix = `${userId}:${providerId}:`;
+    for (const key of transportCache.keys()) {
+      if (key.startsWith(prefix)) {
+        transportCache.delete(key);
+      }
+    }
     logger.debug(`用户 ${userId} 的 ${providerId} Transport 缓存已失效`);
   } else {
     // 清除该用户的所有缓存
@@ -173,11 +203,16 @@ export async function getOrCreateTransport(
   userId: string,
   provider: ProviderDefinition,
 ): Promise<ProviderTransport> {
-  const cacheKey = `${userId}:${provider.id}`;
+  // 读取用户自定义 baseUrl。缓存键纳入 baseUrl，确保修改自定义地址后缓存正确失效，
+  // 不会复用指向旧地址的 Transport。
+  const customBaseUrl = getUserBaseUrl(userId, provider);
+  const cacheKey = `${userId}:${provider.id}:${customBaseUrl ?? ''}`;
 
-  // 检查缓存是否命中且未过期
+  // 检查缓存是否命中且未过期。命中时刷新 LRU 位置（移到 Map 尾部）。
   const cached = transportCache.get(cacheKey);
   if (cached && cached.expireAt > Date.now()) {
+    transportCache.delete(cacheKey);
+    transportCache.set(cacheKey, cached);
     return cached.transport;
   }
 
@@ -188,19 +223,13 @@ export async function getOrCreateTransport(
     );
   }
 
-  const transport = createTransport(provider, apiKey);
+  const transport = createTransport(provider, apiKey, customBaseUrl ?? undefined);
 
-  // 写入缓存，超限时淘汰最早过期的条目
-  if (transportCache.size >= MAX_CACHE_SIZE) {
-    let oldestKey: string | null = null;
-    let oldestExpire = Infinity;
-    for (const [k, v] of transportCache) {
-      if (v.expireAt < oldestExpire) {
-        oldestExpire = v.expireAt;
-        oldestKey = k;
-      }
-    }
-    if (oldestKey !== null) {
+  // 写入缓存。超限时执行 LRU 淘汰：Map 迭代按插入序，
+  // 删除最久未访问的条目（位于 Map 头部）。命中时通过 delete+set 将条目移到尾部。
+  if (transportCache.size >= MAX_CACHE_SIZE && !transportCache.has(cacheKey)) {
+    const oldestKey = transportCache.keys().next().value;
+    if (oldestKey !== undefined) {
       transportCache.delete(oldestKey);
     }
   }

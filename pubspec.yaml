@@ -1,5 +1,5 @@
 name: riko
-description: "A new Flutter project."
+description: "RIKO - AI Chat desktop/mobile app with streaming chat, tool calling, and memory."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -42,8 +42,6 @@ dependencies:
   dio: ^5.8.0+1
   # 文件选择
   file_picker: ^10.1.2
-  # 压缩/解压
-  archive: ^4.0.7
   # 路径处理
   path: ^1.9.1
   path_provider: ^2.1.5
@@ -51,14 +49,8 @@ dependencies:
   flutter_markdown: ^0.7.6
   # Markdown 解析（flutter_markdown 的 builder 需要直接访问 Element 类型）
   markdown: ^7.2.1
-  # 字体（包含 Noto Sans SC 中文字体）
-  google_fonts: ^6.2.1
   # 时间格式化
   intl: ^0.19.0
-  # 骨架屏
-  shimmer: ^3.0.0
-  # 链式动效库 — 简化复杂动画编排，支持 fade/scale/slide/blur/shadow 等
-  flutter_animate: ^4.5.2
   # Font Awesome 图标库
   font_awesome_flutter: ^11.0.0
   # WebSocket 支持（跨平台事件推送）
@@ -71,7 +63,6 @@ dependencies:
   shared_preferences: ^2.2.0
   # 安全存储（加密存储 JWT Token）
   flutter_secure_storage: ^9.2.4
-  desktop_multi_window: ^0.3.0
 
   # Lottie 矢量动画（启动页媒体化）
   lottie: ^3.1.2
@@ -145,19 +136,19 @@ flutter:
   fonts:
     - family: MiSans
       fonts:
-        - asset: assets/fronts/MiSans/MiSans/ttf/MiSans-Thin.ttf
+        - asset: assets/fonts/MiSans/MiSans/ttf/MiSans-Thin.ttf
           weight: 100
-        - asset: assets/fronts/MiSans/MiSans/ttf/MiSans-ExtraLight.ttf
+        - asset: assets/fonts/MiSans/MiSans/ttf/MiSans-ExtraLight.ttf
           weight: 200
-        - asset: assets/fronts/MiSans/MiSans/ttf/MiSans-Light.ttf
+        - asset: assets/fonts/MiSans/MiSans/ttf/MiSans-Light.ttf
           weight: 300
-        - asset: assets/fronts/MiSans/MiSans/ttf/MiSans-Normal.ttf
+        - asset: assets/fonts/MiSans/MiSans/ttf/MiSans-Normal.ttf
           weight: 400
-        - asset: assets/fronts/MiSans/MiSans/ttf/MiSans-Medium.ttf
+        - asset: assets/fonts/MiSans/MiSans/ttf/MiSans-Medium.ttf
           weight: 500
-        - asset: assets/fronts/MiSans/MiSans/ttf/MiSans-Demibold.ttf
+        - asset: assets/fonts/MiSans/MiSans/ttf/MiSans-Demibold.ttf
           weight: 600
-        - asset: assets/fronts/MiSans/MiSans/ttf/MiSans-Bold.ttf
+        - asset: assets/fonts/MiSans/MiSans/ttf/MiSans-Bold.ttf
           weight: 700
-        - asset: assets/fronts/MiSans/MiSans/ttf/MiSans-Heavy.ttf
+        - asset: assets/fonts/MiSans/MiSans/ttf/MiSans-Heavy.ttf
           weight: 900

@@ -534,7 +534,7 @@ void main() {
   group('onRawSseLine 回调', () {
     test('每行 SSE 数据都触发回调', () async {
       final rawLines = <String>[];
-      final input = 'data: hello\n: keep-alive\ndata: world\n';
+      const input = 'data: hello\n: keep-alive\ndata: world\n';
       await _collect(
         parseSseStream(
           _encode(input),
@@ -548,7 +548,7 @@ void main() {
     test('缓冲区尾部无换行符时也触发回调', () async {
       final rawLines = <String>[];
       // 末尾没有换行符
-      final input = 'data: tail';
+      const input = 'data: tail';
       await _collect(
         parseSseStream(
           _encode(input),

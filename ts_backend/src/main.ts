@@ -305,8 +305,18 @@ async function bootstrap(): Promise<void> {
   });
 
   app.addHook('onClose', async () => {
-    await pluginManager.stopAll();
-    await closeDb();
+    // @robustness 关闭流程中任一步骤失败不应中断后续清理，
+    // 否则可能导致数据库连接或子进程残留。分别 try/catch 并记录日志。
+    try {
+      await pluginManager.stopAll();
+    } catch (err) {
+      logger.error(err, '[关闭] pluginManager.stopAll 失败，继续关闭流程');
+    }
+    try {
+      await closeDb();
+    } catch (err) {
+      logger.error(err, '[关闭] closeDb 失败');
+    }
     logger.info('[关闭] AI Chat 后端服务正在关闭...');
   });
 

@@ -69,10 +69,9 @@ async function handleGetFile(
   request: import('fastify').FastifyRequest,
   reply: import('fastify').FastifyReply,
 ) {
-  const user = getCurrentUser(request);
-  const userId = user.userId;
-  // TODO: 将 userId 传入工具函数实现用户隔离
-  void userId;
+  // 调用 getCurrentUser 完成认证校验（未认证会抛出 401）
+  // TODO: 文件工具目前基于全局 memoryRoot，未来需按 userId 解析用户专属 memoryRoot
+  getCurrentUser(request);
   const query = request.query as { file_path?: string };
   if (!query.file_path) {
     return reply.status(400).send({ success: false, message: 'file_path 参数不能为空' });
@@ -92,10 +91,9 @@ async function handleListDirectory(
   request: import('fastify').FastifyRequest,
   reply: import('fastify').FastifyReply,
 ) {
-  const user = getCurrentUser(request);
-  const userId = user.userId;
-  // TODO: 将 userId 传入工具函数实现用户隔离
-  void userId;
+  // 调用 getCurrentUser 完成认证校验（未认证会抛出 401）
+  // TODO: 文件工具目前基于全局 memoryRoot，未来需按 userId 解析用户专属 memoryRoot
+  getCurrentUser(request);
   const query = request.query as { path?: string };
   const result = listDirectory(query.path ?? '');
   if (result.success) {
@@ -112,10 +110,9 @@ async function handleDeleteFile(
   request: import('fastify').FastifyRequest,
   reply: import('fastify').FastifyReply,
 ) {
-  const user = getCurrentUser(request);
-  const userId = user.userId;
-  // TODO: 将 userId 传入工具函数实现用户隔离
-  void userId;
+  // 调用 getCurrentUser 完成认证校验（未认证会抛出 401）
+  // TODO: 文件工具目前基于全局 memoryRoot，未来需按 userId 解析用户专属 memoryRoot
+  getCurrentUser(request);
   const query = request.query as { file_path?: string };
   if (!query.file_path) {
     return reply.status(400).send({ success: false, message: 'file_path 参数不能为空' });

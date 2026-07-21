@@ -189,7 +189,15 @@ export class DatabaseWrapper {
       this.raw.exec(`PRAGMA ${key} = ${val}`);
       return;
     }
-    const pragmaName = input.trim().toLowerCase();
+    const trimmed = input.trim();
+    // 严格整体格式校验：只允许 "pragma_name" 或 "pragma_name(identifier)" 两种形态，
+    // 其中 identifier 仅含字母/数字/下划线。任何尾随内容（如分号、注释、第二段语句）
+    // 都会导致整体不匹配，从而在源头杜绝 SQL 注入。
+    const pragmaMatch = /^([a-zA-Z_][\w]*)(?:\(([\w]+)\))?$/.exec(trimmed);
+    if (!pragmaMatch) {
+      throw new Error(`PRAGMA contains invalid characters: ${input}`);
+    }
+    const pragmaName = pragmaMatch[1].toLowerCase();
     if (!ALLOWED_PRAGMAS.has(pragmaName)) {
       throw new Error(`PRAGMA ${input} is not allowed`);
     }
@@ -272,6 +280,11 @@ export class DatabaseWrapper {
       this._persistTimer = null;
     }
     if (!this.dirty) return;
+    // 内存数据库（:memory:）无磁盘文件，跳过持久化（常见于单元测试）
+    if (this.dbPath === ':memory:') {
+      this.dirty = false;
+      return;
+    }
     try {
       const data = this.raw.export();
       await fs.promises.writeFile(this.dbPath, Buffer.from(data));

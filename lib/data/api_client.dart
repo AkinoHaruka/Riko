@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/config/backend_config.dart';
+
 /// 远程后端 API 客户端（基于 Dio）
 ///
 /// 自动管理 baseUrl（延迟加载）、JWT token 注入、统一错误处理（429 限流提示）。
@@ -24,7 +26,10 @@ class ApiClient {
   }
 
   /// 默认后端地址（桌面端为 127.0.0.1:3000）
-  static String _defaultBaseUrl = 'http://127.0.0.1:3000';
+  ///
+  /// 引用 [BackendConfig.defaultBaseUrl]，作为单一常量源。
+  /// 通过 [setDefaultBaseUrl] 可在运行时覆写（如 Android 探测后切换）。
+  static String _defaultBaseUrl = BackendConfig.defaultBaseUrl;
 
   static String get defaultBaseUrl => _defaultBaseUrl;
 
@@ -38,12 +43,16 @@ class ApiClient {
     // 先快速试 127.0.0.1（真机 proot 后端）
     if (await _probeUrl(defaultBaseUrl)) return defaultBaseUrl;
     // 失败则试 10.0.2.2（模拟器连宿主机）
-    const emulatorUrl = 'http://10.0.2.2:3000';
+    const emulatorUrl = BackendConfig.emulatorBaseUrl;
     if (await _probeUrl(emulatorUrl)) return emulatorUrl;
     return defaultBaseUrl;
   }
 
   static Future<bool> _probeUrl(String base) async {
+    // 注意：不调用 dio.close() 释放资源，
+    // 因为 Dio 5.x 的 close() 会级联关闭底层 HttpClient，
+    // 在测试环境中会破坏共享的 _realHttpClient 导致后续测试失败。
+    // 短生命周期的 Dio 实例由 GC 自动回收。
     try {
       final probe = Dio(
         BaseOptions(
@@ -229,7 +238,12 @@ class ApiClient {
   }
 
   /// 用当前 token 重试失败的请求
-  Future<Response<dynamic>> _retryRequest(RequestOptions options) {
+  ///
+  /// 注意：不调用 retryDio.close() 释放资源，
+  /// 因为 Dio 5.x 的 close() 会级联关闭底层 HttpClient，
+  /// 在测试环境中会破坏共享的 _realHttpClient 导致后续测试失败。
+  /// 短生命周期的 Dio 实例由 GC 自动回收。
+  Future<Response<dynamic>> _retryRequest(RequestOptions options) async {
     final retryDio = Dio()
       ..options.baseUrl = _dio.options.baseUrl
       ..options.connectTimeout = _dio.options.connectTimeout
@@ -275,6 +289,11 @@ class ApiClient {
   }
 
   /// 快速健康检查（使用独立短超时 Dio，避免触发拦截器日志）
+  ///
+  /// 注意：不调用 checkDio.close() 释放资源，
+  /// 因为 Dio 5.x 的 close() 会级联关闭底层 HttpClient，
+  /// 在测试环境中会破坏共享的 _realHttpClient 导致后续测试失败。
+  /// 短生命周期的 Dio 实例由 GC 自动回收。
   Future<bool> healthCheckFast() async {
     try {
       final checkDio = Dio(

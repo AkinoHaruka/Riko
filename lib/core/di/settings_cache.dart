@@ -75,7 +75,10 @@ class SettingsCacheState {
   const SettingsCacheState({
     this.selectedModel = 'deepseek-v4-flash',
     this.temperature = 0.7,
-    this.maxTokens = 384000,
+    // 默认 16384：与后端 MAX_TOKENS_DEFAULT 对齐。
+    // 原默认 384000 远超所有主流模型的实际 max_output_tokens（通常 4K-8K），
+    // 会导致 token 预估与上下文压缩判断失真，且超出后端 131072 硬上限。
+    this.maxTokens = 16384,
     this.thinkingType = 'enabled',
     this.reasoningEffort = 'high',
     this.jsonMode = false,

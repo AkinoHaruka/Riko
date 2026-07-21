@@ -18,6 +18,7 @@ import {
   compactConversation,
   runPostCompactCleanup,
   messagesToCompactMessages,
+  restoreRecentMessages,
 } from '../../domain/compact/service.js';
 import {
   estimateMessagesTokens,
@@ -87,29 +88,15 @@ export async function compactRoutes(app: FastifyInstance): Promise<void> {
 
         // Step 2: 将近期消息恢复为未压缩状态
         // 使用内容计数器匹配，因为同一内容可能出现多次，需精确还原数量
-        const recentContentCounts = new Map<string, number>();
-        for (const m of result.recentMessages) {
-          const key = `${m.role}|${m.content}`;
-          recentContentCounts.set(key, (recentContentCounts.get(key) ?? 0) + 1);
-        }
         const allMessages = db
           .prepare(
             'SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC',
           )
           .all(body.conversation_id) as Array<{ id: string; role: string; content: string }>;
 
-        for (const msg of allMessages) {
-          if (recentContentCounts.size === 0) break;
-          const key = `${msg.role}|${msg.content}`;
-          const count = recentContentCounts.get(key);
-          if (count !== undefined) {
-            db.prepare('UPDATE messages SET is_compact_summary = 0 WHERE id = ?').run(msg.id);
-            if (count > 1) {
-              recentContentCounts.set(key, count - 1);
-            } else {
-              recentContentCounts.delete(key);
-            }
-          }
+        const restoredIds = restoreRecentMessages(result.recentMessages, allMessages);
+        for (const id of restoredIds) {
+          db.prepare('UPDATE messages SET is_compact_summary = 0 WHERE id = ?').run(id);
         }
 
         // Step 3: 插入压缩边界标记和摘要消息

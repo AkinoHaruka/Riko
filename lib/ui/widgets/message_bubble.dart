@@ -77,7 +77,7 @@ class _BubblePainter extends CustomPainter {
     final tw = triangleWidth;
 
     // 三角中心与 40px 头像的中心对齐
-    final ty = 16.0;
+    const ty = 16.0;
 
     if (isUser) {
       // 用户消息：三角在气泡右侧

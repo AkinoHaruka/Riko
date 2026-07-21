@@ -17,18 +17,19 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:meta/meta.dart';
 
+import '../../core/config/backend_config.dart';
 import 'ai_adapter.dart';
 import 'sse_stream_parser.dart';
 
 /// AI 适配器（通过本地 Fastify 后端转发）
 ///
-/// 将请求转发到本地后端服务（默认 http://localhost:3000），
+/// 将请求转发到本地后端服务（默认 http://127.0.0.1:3000，由 [BackendConfig] 统一管理），
 /// 由后端负责与各 AI Provider 交互，前端无需直接持有 API Key。
 /// 后端根据 model 参数自动路由到对应的 Provider。
 class DeepSeekAdapter implements AIAdapter {
   final Dio _dio;
 
-  static const String _defaultBaseUrl = 'http://localhost:3000';
+  static const String _defaultBaseUrl = BackendConfig.defaultBaseUrl;
   static const String _endpoint = '/chat/completions';
 
   String? _authToken;

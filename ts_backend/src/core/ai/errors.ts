@@ -379,9 +379,16 @@ export function classifyError(error: unknown): ClassifiedError {
   const decisions = DECISION_TABLE[reason];
   const retryAfterMs = reason === FailoverReason.RateLimit ? extractRetryAfterMs(error) : undefined;
 
+  // 状态码归一化：
+  // - 有 HTTP 状态码：直接使用
+  // - 无 HTTP 状态码（网络/DNS/SSL 等传输层错误）：保持 0，由调用方区分"无响应"与"有响应"
+  // - 完全未知错误：兜底为 500（内部错误语义）
+  const normalizedStatusCode =
+    statusCode > 0 ? statusCode : reason === FailoverReason.Unknown ? 500 : 0;
+
   return {
     reason,
-    statusCode: statusCode || (reason === FailoverReason.Unknown ? 500 : statusCode),
+    statusCode: normalizedStatusCode,
     retryable: decisions.retryable,
     shouldCompress: decisions.shouldCompress,
     shouldRotateCredential: decisions.shouldRotateCredential,

@@ -120,6 +120,7 @@ async function* streamResponseOpenAI(
       () => { hasReceivedFirstChunk = true; },
       pendingWaitingEvents,
       loopStats,
+      userId,
     );
 
     // 流式响应结束后执行后采样钩子（压缩、会话笔记、梦境）
@@ -226,6 +227,7 @@ async function* streamResponseTransport(
       () => { hasReceivedFirstChunk = true; },
       pendingWaitingEvents,
       loopStats,
+      userId,
     );
 
     // 后采样钩子

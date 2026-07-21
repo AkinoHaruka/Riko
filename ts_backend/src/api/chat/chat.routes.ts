@@ -109,15 +109,37 @@ export function registerChatRoutes(app: FastifyInstance): void {
           'X-Accel-Buffering': 'no',
         });
 
+        // 客户端断开检测：用户关闭页面/取消请求时，Node 触发 request 'close' 事件。
+        // 不监听此事件会导致：后端继续从上游 AI 拉流、继续执行工具、继续消耗 API token，
+        // 而响应已无人接收——纯粹的资源浪费。检测到断开后 break 循环，让生成器 finally 块清理。
+        let clientDisconnected = false;
+        const onClientClose = () => {
+          clientDisconnected = true;
+        };
+        request.raw.on('close', onClientClose);
+
         try {
           for await (const chunk of chatCompletionStream(body, userId)) {
-            reply.raw.write(chunk);
+            if (clientDisconnected) {
+              // 客户端已断开：停止消费生成器，触发其 return()，终止后续工具调用与 API 拉流
+              request.log.info('[Chat] 客户端断开，终止 SSE 流');
+              break;
+            }
+            // 写入失败（如对端重置）同样视为断开
+            if (!reply.raw.write(chunk)) {
+              // 返回 false 表示缓冲区已满（背压），等待 drain 再继续，避免内存暴涨
+              await new Promise<void>((resolve) => reply.raw.once('drain', () => resolve()));
+            }
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          // 流式传输中途异常时，通过 SSE error 事件通知前端，而非直接断开连接
-          reply.raw.write(formatSseError('STREAM_ERROR', message));
+          // 客户端已断开时不再尝试写入错误事件（socket 不可用，写入会抛错）
+          if (!clientDisconnected) {
+            // 流式传输中途异常时，通过 SSE error 事件通知前端，而非直接断开连接
+            reply.raw.write(formatSseError('STREAM_ERROR', message));
+          }
         } finally {
+          request.raw.off('close', onClientClose);
           reply.raw.end();
         }
         return;

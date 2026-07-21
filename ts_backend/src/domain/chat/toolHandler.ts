@@ -12,16 +12,74 @@ import { createLogger } from '../../core/logger/index.js';
 
 const logger = createLogger('ToolHandler');
 
-/** 全局护栏控制器实例（每轮对话重置） */
-const guardrailController = new ToolCallGuardrailController({
-  warningsEnabled: true,
-  hardStopEnabled: true,
-});
-
-/** 重置护栏状态（新对话轮次开始时调用） */
-export function resetToolGuardrails(): void {
-  guardrailController.reset();
+/**
+ * 护栏控制器实例池：按 conversationId 维系独立实例。
+ *
+ * 设计说明（修复并发污染）：
+ * 原实现使用模块级全局单例，导致并发请求共享同一份护栏计数器——
+ * 用户 A 的请求开始时调用 resetToolGuardrails() 会清空用户 B 正在进行的
+ * 重复失败/无进展计数，且 haltDecision 会跨请求泄漏。这不仅破坏隔离性，
+ * 还可能让护栏误判（把别人的失败算到自己头上）。
+ *
+ * 现改为每会话独立实例：各会话的护栏状态互不影响，符合
+ * ToolCallGuardrailController "每轮对话一个实例" 的设计意图。
+ * 实例带最后访问时间，定期清理空闲会话防止内存泄漏。
+ */
+interface GuardrailEntry {
+  controller: ToolCallGuardrailController;
+  lastAccess: number;
 }
+
+const guardrailPool = new Map<string, GuardrailEntry>();
+/** 空闲会话实例最大存活时间：30 分钟 */
+const GUARDRAIL_IDLE_TTL_MS = 30 * 60 * 1000;
+/** 实例池容量上限，防止会话数暴涨导致内存膨胀 */
+const GUARDRAIL_POOL_MAX = 500;
+
+/** 获取（或创建）指定会话的护栏控制器，并刷新其访问时间 */
+function getGuardrail(conversationId: string): ToolCallGuardrailController {
+  let entry = guardrailPool.get(conversationId);
+  if (!entry) {
+    // 容量上限：淘汰最久未访问的实例（Map 迭代按插入序，头部最旧）
+    if (guardrailPool.size >= GUARDRAIL_POOL_MAX) {
+      const oldestKey = guardrailPool.keys().next().value;
+      if (oldestKey !== undefined) guardrailPool.delete(oldestKey);
+    }
+    entry = {
+      controller: new ToolCallGuardrailController({ warningsEnabled: true, hardStopEnabled: true }),
+      lastAccess: Date.now(),
+    };
+    guardrailPool.set(conversationId, entry);
+  }
+  entry.lastAccess = Date.now();
+  return entry.controller;
+}
+
+/**
+ * 重置护栏状态（新对话轮次开始时调用）。
+ *
+ * @param conversationId - 传入时仅重置该会话的护栏（推荐，并发安全）；
+ *                         不传时退化为清空整个实例池（向后兼容旧调用）。
+ */
+export function resetToolGuardrails(conversationId?: string): void {
+  if (conversationId !== undefined) {
+    const entry = guardrailPool.get(conversationId);
+    entry?.controller.reset();
+  } else {
+    guardrailPool.clear();
+  }
+}
+
+/** 定期清理空闲护栏实例，防止内存泄漏。unref 避免阻止进程退出。 */
+const guardrailCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of guardrailPool) {
+    if (now - entry.lastAccess > GUARDRAIL_IDLE_TTL_MS) {
+      guardrailPool.delete(key);
+    }
+  }
+}, GUARDRAIL_IDLE_TTL_MS);
+guardrailCleanupTimer.unref?.();
 
 export type { ToolCallResult } from '../../core/types/tools.js';
 
@@ -48,6 +106,7 @@ function parseToolArguments(argsStr: string): Record<string, unknown> {
  * @param conversationId - 当前会话 ID
  * @param memoryRoot - 记忆文件根目录
  * @param allowedTools - 允许执行的工具名称集合，未提供时允许所有已注册工具
+ * @param userId - 当前用户 ID（可选），用于工具内数据隔离
  * @returns 以索引为键的工具调用结果映射
  */
 export async function executeToolCalls(
@@ -55,9 +114,12 @@ export async function executeToolCalls(
   conversationId: string,
   memoryRoot: string,
   allowedTools?: Set<string>,
+  userId?: string,
 ): Promise<Map<number, ToolCallResult>> {
   const results = new Map<number, ToolCallResult>();
-  const context: ToolContext = { conversationId, memoryRoot };
+  const context: ToolContext = { conversationId, memoryRoot, userId };
+  // 按会话获取独立的护栏控制器，避免并发请求间的状态污染
+  const guardrailController = getGuardrail(conversationId);
   const sortedIndices = Object.keys(toolCallsAccumulator)
     .map(Number)
     .sort((a, b) => a - b);

@@ -134,6 +134,45 @@ export function createCompactBoundaryMessage(
 }
 
 /**
+ * 计算需要从"已压缩"状态恢复为"未压缩"的最近消息 ID 集合。
+ *
+ * 使用基于 Map 的内容计数匹配：同一 role|content 组合可能出现多次，
+ * 需精确还原数量，避免重复内容只恢复一条（旧版 Set 方案的缺陷）。
+ * allMessages 应按时间倒序排列（与 DB 查询 ORDER BY created_at DESC 一致），
+ * 这样会优先恢复较新的匹配消息。
+ *
+ * @param recentMessages - 压缩时保留的最近消息（来自压缩结果）
+ * @param allMessages - 数据库中按时间倒序排列的全部消息
+ * @returns 需要恢复（标记为未压缩）的消息 ID 集合
+ */
+export function restoreRecentMessages(
+  recentMessages: Array<{ role: string; content: string }>,
+  allMessages: Array<{ id: string; role: string; content: string }>,
+): Set<string> {
+  const recentContentCounts = new Map<string, number>();
+  for (const m of recentMessages) {
+    const key = `${m.role}|${m.content}`;
+    recentContentCounts.set(key, (recentContentCounts.get(key) ?? 0) + 1);
+  }
+
+  const restored = new Set<string>();
+  for (const msg of allMessages) {
+    if (recentContentCounts.size === 0) break;
+    const key = `${msg.role}|${msg.content}`;
+    const count = recentContentCounts.get(key);
+    if (count !== undefined) {
+      restored.add(msg.id);
+      if (count > 1) {
+        recentContentCounts.set(key, count - 1);
+      } else {
+        recentContentCounts.delete(key);
+      }
+    }
+  }
+  return restored;
+}
+
+/**
  * 从未压缩消息中选择保留的最近对话消息。
  */
 export function selectRecentMessages(messages: CompactMessage[], userId: string): CompactMessage[] {

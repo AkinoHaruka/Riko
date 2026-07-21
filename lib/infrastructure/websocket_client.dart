@@ -104,7 +104,21 @@ class WebSocketClient {
   /// 实际建立连接的内部方法
   ///
   /// 先清理旧连接（如有），再通过 URL 提供器获取最新地址并附加 token 参数建立新连接。
-  /// 后端在连接时校验 URL 中的 token 参数，无效 token 时拒绝连接。
+  ///
+  /// **Token 传递方式**：通过 URL query（`?token=xxx`）而非 HTTP Header 传递，
+  /// 原因：
+  /// 1. 浏览器环境的 WebSocket API 不支持自定义 Header，必须使用 URL query
+  ///    才能跨平台（桌面/移动/Web）保持一致的实现
+  /// 2. Riko 是单用户本地应用，前后端均运行在用户本机，token 不经网络出站
+  /// 3. 后端在连接握手时即校验 token，无效连接会被立刻关闭
+  ///
+  /// **安全性评估**（本地场景可接受）：
+  /// - 风险：URL 可能出现在后端访问日志中；浏览器历史/书签可能记录 URL
+  /// - 缓解：本应用不维护访问日志；WebSocket URL 不进入浏览器历史
+  /// - 公网部署时建议改用 Subprotocol header 或短期一次性 ticket
+  ///
+  /// **重置时机**：仅在 `WebSocketChannel.ready` Future 完成（握手成功）后重置
+  /// `_reconnectAttempts`，避免连接失败时计数被反复清零导致无限重连。
   Future<void> _doConnect() async {
     if (_isDisposed) return;
 
@@ -116,25 +130,37 @@ class WebSocketClient {
       _channel = null;
     }
 
+    // 在 URL 中附加 token 参数，供后端在握手时校验
+    // 注：日志输出仅打印 wsUrl（不含 token），避免 token 泄露到日志
+    final wsUrl = _urlProvider();
+    final uri = (_token != null && _token!.isNotEmpty)
+        ? '$wsUrl?token=$_token'
+        : wsUrl;
+    final channel = WebSocketChannel.connect(Uri.parse(uri));
+    _channel = channel;
+
+    // 先订阅流，避免握手完成前到达的消息丢失
+    _subscription = channel.stream.listen(
+      _onMessage,
+      onError: _onError,
+      onDone: _onDone,
+    );
+
+    // 等待握手完成：失败时 ready 会抛出异常，不会重置重连计数
     try {
-      // 在 URL 中附加 token 参数，供后端在连接时校验
-      final wsUrl = _urlProvider();
-      final uri = (_token != null && _token!.isNotEmpty)
-          ? '$wsUrl?token=$_token'
-          : wsUrl;
-      _channel = WebSocketChannel.connect(Uri.parse(uri));
-      debugPrint('[WebSocket] 已连接: $wsUrl');
-
-      // 连接成功后重置重连计数
+      await channel.ready;
+      // 握手成功，重置重连计数
       _reconnectAttempts = 0;
-
-      _subscription = _channel!.stream.listen(
-        _onMessage,
-        onError: _onError,
-        onDone: _onDone,
-      );
+      debugPrint('[WebSocket] 已连接: $wsUrl');
     } catch (e) {
-      debugPrint('[WebSocket] 连接失败: $e');
+      debugPrint('[WebSocket] 连接握手失败: $e');
+      // 握手失败：清理本次失败连接的资源，进入重连流程
+      await _subscription?.cancel();
+      _subscription = null;
+      await channel.sink.close();
+      if (_channel == channel) {
+        _channel = null;
+      }
       _scheduleReconnect();
     }
   }

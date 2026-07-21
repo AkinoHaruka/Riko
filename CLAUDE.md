@@ -33,7 +33,6 @@ flutter pub get                  # Install dependencies
 flutter run -d windows           # Run on Windows desktop
 flutter run -d android           # Run on Android
 flutter build apk --release      # Build Android APK
-dart run build_runner build --delete-conflicting-outputs  # Regenerate drift .g.dart files
 flutter analyze                  # Static analysis
 flutter test                     # Run all Dart tests
 flutter test --coverage          # Run with coverage
@@ -57,22 +56,33 @@ lib/
 ├── main.dart                  # Entry point, window_manager config, BackendRunner
 ├── app.dart                   # MaterialApp.router root
 ├── core/
-│   ├── router.dart            # GoRouter: / → /settings, /archive, /memory, /admin
+│   ├── deferred_loader.dart   # Deferred imports helper for lazy page loading
+│   ├── chat_facade/           # Chat facade models (agent params, progress, stream state)
+│   │   └── models/            #   agent_params, agent_progress, agent_type, chat_options,
+│   │                          #   chat_stream_state, monitor_state
+│   ├── config/
+│   │   └── backend_config.dart# Single source of truth for backend address (consolidates hardcoded URLs)
 │   ├── di/
-│   │   ├── providers.dart     # Global Riverpod providers (apiClient, database, repositories, panelRatio, WebSocket)
+│   │   ├── providers.dart     # Global Riverpod providers (apiClient, repositories, panelRatio, WebSocket)
 │   │   ├── chat_provider.dart # ChatNotifier: SSE streaming, optimistic UI, monitor records, sub-agent activity
+│   │   ├── chat_state.dart    # ChatState immutable state + copyWith
+│   │   ├── chat_agent_mixin.dart  # Chat agent behavior mixin
+│   │   ├── chat_monitor_mixin.dart# Chat monitor records mixin
 │   │   ├── settings_cache.dart# SettingsCacheState — mirrors backend settings into Flutter
-│   │   ├── dream_notifier.dart
-│   │   └── internal_event.dart
-│   └── theme/                 # Dark theme only (Color(0xFF111111) base)
-├── data/
+│   │   ├── dream_notifier.dart, dream_status.dart
+│   │   ├── internal_event.dart
+│   │   ├── input_bar_state_provider.dart
+│   │   ├── mcp_provider.dart, toast_provider.dart
+│   │   └── chat_search_provider.dart, chat_background_provider.dart
+│   ├── theme/                 # Dark theme only (Color(0xFF111111) base) — app_colors, app_glass, app_typography, app_animations, app_haptics, app_radius, app_shadows, app_spacing, app_spring, app_theme
+│   └── utils/                 # collection_utils, time_formatters
+├── data/                      # Remote repository pattern — no local DB, all data fetched from backend
 │   ├── api_client.dart        # Dio-based HTTP client → 127.0.0.1:3000, JWT token management
-│   ├── database.dart          # Drift AppDatabase: Conversations, Messages, Settings, Memory, ApiMonitorRecords
-│   ├── database_impl.dart     # Native SQLite via drift/native (VM platforms)
-│   ├── database_web.dart      # Web SQLite via drift/wasm
+│   ├── mcp_api.dart           # MCP server management API
 │   ├── repositories/          # RemoteChatRepository, RemoteSettingsRepository, RemoteMemoryRepository
-│   ├── daos/                  # Drift DAOs (generated + handwritten), .g.dart files
-│   └── tables/                # Drift table definitions
+│   └── models/                # Plain Dart data classes (conversation, chat_message) — no codegen
+├── domain/
+│   └── ports/                 # Abstract ports for dependency inversion (ai_stream_port, chat_backend_port, local_storage_port, settings_port)
 ├── infrastructure/
 │   ├── ai_adapter/
 │   │   ├── ai_adapter.dart    # Abstract AIAdapter interface (chatStream)
@@ -84,10 +94,19 @@ lib/
 │   └── sse_client.dart
 ├── ui/
 │   ├── app_shell.dart         # Desktop: frameless window with custom title bar + resize handles
-│   ├── chat_home_page.dart    # Main chat view: message list, input bar, split-pane terminal + monitor panel
-│   ├── settings_page.dart / memory_page.dart / archive_page.dart / admin_page.dart / monitor_page.dart
-│   └── widgets/               # message_bubble, modern_input_bar, conversation_drawer, draggable_splitter,
-│                              #   terminal_panel, sub_agent_trigger_panel, dynamic_island, desktop_title_bar
+│   ├── router.dart            # GoRouter: / → /settings, /archive, /memory, /admin
+│   ├── chat_page.dart         # Main chat view: message list, input bar, split-pane terminal + monitor panel
+│   ├── chat/                  # chat_column, chat_popup_menu, message_list, websocket_listener_mixin
+│   ├── settings_page.dart / memory_page.dart / archive_page.dart / admin_page.dart / monitor_page.dart / agent_list_page.dart / splash_screen.dart
+│   └── widgets/
+│       ├── message_bubble.dart, modern_input_bar.dart, conversation_list_page.dart
+│       ├── desktop_title_bar.dart, draggable_splitter.dart, terminal_panel*.dart
+│       ├── memory_file_browser.dart, icon_gallery.dart, toast_overlay.dart
+│       ├── avatar/            # avatar_crop_page, avatar_provider
+│       ├── background/        # background_picker
+│       ├── dynamic_island/    # dynamic_island, dynamic_island_overlay
+│       ├── search/            # chat_search_bar
+│       └── settings/          # settings_data_mixin, settings_group, settings_slider, settings_toggle, settings_text_field, settings_import_dialog, settings_action_button, settings_param_widgets
 └── platform/
     ├── backend_runner.dart    # Compatibility wrapper → delegates to ProotRunner
     ├── proot_runner.dart      # MethodChannel bridge for Android embedded backend (proot + Ubuntu rootfs)
@@ -151,12 +170,14 @@ src/
 5. `ChatNotifier` accumulates chunks in `streamingContent`/`streamingReasoningContent`, throttles PUT to backend at 150ms intervals
 6. On stream end: final content saved, message list refreshed, monitor record completed
 
-### Database Platform Strategy
+### Database Strategy
 
-Conditional imports in `database.dart`:
-- **VM platforms** (Windows, Android, iOS, Linux, macOS): `database_impl.dart` → Native SQLite via `drift/native`
-- **Web**: `database_web.dart` → `drift/wasm` with sqlite3.wasm
-- **Fallback**: `database_stub.dart` throws `UnsupportedError`
+**Frontend**: No local database — all data (conversations, messages, settings, memory) is fetched from the backend via remote repositories. The frontend only persists the JWT token via `shared_preferences` / `flutter_secure_storage`.
+
+**Backend**: better-sqlite3 (native C++ SQLite, optional dependency) with sql.js (WASM) fallback. Conditional loading in `core/database/connection.ts`:
+- Default: load `better-sqlite3` (better performance, native binding)
+- Fallback (when `better-sqlite3` cannot be compiled, e.g. some mobile/PaaS environments): use `sql.js` WASM engine
+- Force WASM via env `DB_ENGINE=wasm`
 
 ### Key Design Decisions
 

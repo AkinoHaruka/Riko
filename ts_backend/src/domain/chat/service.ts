@@ -48,8 +48,8 @@ export async function* chatCompletionStream(
   request: ChatCompletionRequest,
   userId: string,
 ): AsyncGenerator<string> {
-  // 每次请求重置护栏状态，避免上一轮 halt 决策污染本次对话
-  resetToolGuardrails();
+  // 每次请求重置本会话的护栏状态，避免上一轮 halt 决策污染本次对话（并发安全）
+  resetToolGuardrails(request.conversation_id);
   const mainPrompt = loadMainPrompt(userId);
   const toolRules = loadToolRules();
   const persistentMemory = loadPersistentMemory();
@@ -96,8 +96,8 @@ export async function chatCompletionNonStream(
   request: ChatCompletionRequest,
   userId: string,
 ): Promise<Record<string, unknown>> {
-  // 每次请求重置护栏状态，避免上一轮 halt 决策污染本次对话
-  resetToolGuardrails();
+  // 每次请求重置本会话的护栏状态，避免上一轮 halt 决策污染本次对话（并发安全）
+  resetToolGuardrails(request.conversation_id);
   const mainPrompt = loadMainPrompt(userId);
   const toolRules = loadToolRules();
   const persistentMemory = loadPersistentMemory();
@@ -115,16 +115,31 @@ export async function chatCompletionNonStream(
     if (provider.apiMode === 'openai-compatible') {
       // OpenAI 兼容 Provider：使用原有的 toolCallLoop
       const client = await getOrCreateClient(userId);
-      return await nonStreamingToolCallLoop(client, params, conversationId);
+      return await nonStreamingToolCallLoop(client, params, conversationId, undefined, userId);
     }
 
     // 非 OpenAI 兼容 Provider：使用 Transport 的非流式接口
     const transport = await getTransportForModel(request.model, userId);
     const response = await transport.createNonStreamingChat({
       model: request.model,
+      // 完整保留工具调用字段：assistant 的 toolCalls 与 tool 消息的 toolCallId，
+      // 否则多轮对话中含工具调用的历史会在 Anthropic/Gemini 下上下文残缺
       messages: (params.messages as Array<Record<string, unknown>>).map((m) => ({
         role: m.role as 'system' | 'user' | 'assistant' | 'tool',
         content: (m.content as string) ?? '',
+        ...(m.tool_calls
+          ? {
+              toolCalls: (m.tool_calls as Array<Record<string, unknown>>).map((tc) => {
+                const fn = (tc.function ?? {}) as Record<string, unknown>;
+                return {
+                  id: (tc.id as string) ?? '',
+                  name: (fn.name as string) ?? '',
+                  arguments: (fn.arguments as string) ?? '',
+                };
+              }),
+            }
+          : {}),
+        ...(m.tool_call_id ? { toolCallId: m.tool_call_id as string } : {}),
       })),
       tools: (params.tools as Array<Record<string, unknown>> | undefined)?.map((t) => {
         const fn = (t.function ?? {}) as Record<string, unknown>;
@@ -145,6 +160,7 @@ export async function chatCompletionNonStream(
       reasoningEffort: request.reasoning_effort,
     });
 
+    // 归一化响应已含 reasoningContent / toolCalls / usage / finishReason，直接透传
     return response as unknown as Record<string, unknown>;
   } catch (error: unknown) {
     if (error && typeof error === 'object' && 'status' in error) {

@@ -138,6 +138,12 @@ class StreamChunk {
   /// 是否为状态事件（工具调用、压缩通知等，非用户可见内容）
   final bool isStatus;
 
+  /// 是否为后端推送的错误事件（type=error）
+  ///
+  /// 为 true 时表示 content 字段是错误信息，不应作为 AI 回复内容持久化到消息列表，
+  /// ChatNotifier 应将其映射为 [ErrorInfo] 写入 state.error。
+  final bool isError;
+
   /// 工具调用详情（type=tool_call 时携带）
   final ToolCallInfo? toolCallInfo;
 
@@ -157,6 +163,7 @@ class StreamChunk {
     this.isFinished = false,
     this.finishReason,
     this.isStatus = false,
+    this.isError = false,
     this.toolCallInfo,
     this.compactInfo,
     this.sessionNotesInitInfo,
@@ -171,6 +178,7 @@ class StreamChunk {
     bool? isFinished,
     String? finishReason,
     bool? isStatus,
+    bool? isError,
     ToolCallInfo? toolCallInfo,
     CompactInfo? compactInfo,
     SessionNotesInitInfo? sessionNotesInitInfo,
@@ -183,6 +191,7 @@ class StreamChunk {
       isFinished: isFinished ?? this.isFinished,
       finishReason: finishReason ?? this.finishReason,
       isStatus: isStatus ?? this.isStatus,
+      isError: isError ?? this.isError,
       toolCallInfo: toolCallInfo ?? this.toolCallInfo,
       compactInfo: compactInfo ?? this.compactInfo,
       sessionNotesInitInfo: sessionNotesInitInfo ?? this.sessionNotesInitInfo,
@@ -201,6 +210,7 @@ class StreamChunk {
           isFinished == other.isFinished &&
           finishReason == other.finishReason &&
           isStatus == other.isStatus &&
+          isError == other.isError &&
           toolCallInfo == other.toolCallInfo &&
           compactInfo == other.compactInfo &&
           sessionNotesInitInfo == other.sessionNotesInitInfo &&
@@ -214,6 +224,7 @@ class StreamChunk {
         isFinished,
         finishReason,
         isStatus,
+        isError,
         toolCallInfo,
         compactInfo,
         sessionNotesInitInfo,

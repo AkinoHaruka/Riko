@@ -1,9 +1,11 @@
 /**
- * SSE 事件格式化单元测试
+ * SSE 事件格式化与用量数据提取单元测试
  * 测试 formatSseEvent 函数：SSE 事件格式生成、CJK 字符保留、多字段组合等
+ * 测试 extractUsageData 函数：基础用量字段与缓存命中字段提取
  */
 import { describe, it, expect } from 'vitest';
 import { formatSseEvent } from '../../../src/domain/chat/stream.js';
+import { extractUsageData } from '../../../src/domain/chat/toolCallLoop.js';
 
 describe('formatSseEvent', () => {
   it('仅传入 type 和 content 时，生成正确的 SSE 事件', () => {
@@ -40,5 +42,52 @@ describe('formatSseEvent', () => {
   it('content 为空字符串时仍包含 content 字段', () => {
     const result = formatSseEvent('content', '');
     expect(result).toBe('data: {"type":"content","content":""}\n\n');
+  });
+
+  // 以下用例从原 toolCallLoop.test.ts 迁移而来，补充覆盖 type-only / content / data 场景
+  it('仅 type 时生成最简 SSE 事件', () => {
+    const result = formatSseEvent('connected');
+    expect(result).toBe('data: {"type":"connected"}\n\n');
+  });
+
+  it('带 content 时包含 content 字段', () => {
+    const result = formatSseEvent('content', 'hello');
+    const parsed = JSON.parse(result.replace('data: ', '').trim());
+    expect(parsed.type).toBe('content');
+    expect(parsed.content).toBe('hello');
+  });
+
+  it('带 data 时包含 data 字段', () => {
+    const result = formatSseEvent('usage', undefined, { prompt_tokens: 10 });
+    const parsed = JSON.parse(result.replace('data: ', '').trim());
+    expect(parsed.type).toBe('usage');
+    expect(parsed.data).toEqual({ prompt_tokens: 10 });
+  });
+});
+
+describe('extractUsageData', () => {
+  it('提取基础用量字段', () => {
+    const usage = {
+      prompt_tokens: 100,
+      completion_tokens: 50,
+      total_tokens: 150,
+    };
+    const result = extractUsageData(usage as Parameters<typeof extractUsageData>[0]);
+    expect(result.prompt_tokens).toBe(100);
+    expect(result.completion_tokens).toBe(50);
+    expect(result.total_tokens).toBe(150);
+  });
+
+  it('提取缓存命中字段（如存在）', () => {
+    const usage = {
+      prompt_tokens: 100,
+      completion_tokens: 50,
+      total_tokens: 150,
+      prompt_cache_hit_tokens: 80,
+      prompt_cache_miss_tokens: 20,
+    };
+    const result = extractUsageData(usage as Parameters<typeof extractUsageData>[0]);
+    expect(result.prompt_cache_hit_tokens).toBe(80);
+    expect(result.prompt_cache_miss_tokens).toBe(20);
   });
 });

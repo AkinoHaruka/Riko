@@ -77,6 +77,7 @@ export {
   truncateHeadForPtlRetry,
   createCompactBoundaryMessage,
   selectRecentMessages,
+  restoreRecentMessages,
 } from './helpers.js';
 
 /**

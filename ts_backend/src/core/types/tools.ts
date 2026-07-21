@@ -14,6 +14,12 @@ export interface ToolContext {
   conversationId: string;
   /** 允许操作的根目录绝对路径 */
   memoryRoot: string;
+  /**
+   * 当前用户 ID（可选）。
+   * 多用户场景下用于数据隔离，如 FTS5 搜索按 user_id 过滤。
+   * 单用户本地应用场景下可不传，工具实现需处理 undefined 情况。
+   */
+  userId?: string;
 }
 
 /** 工具元数据，用于工具策略过滤、并发分区和护栏判断 */

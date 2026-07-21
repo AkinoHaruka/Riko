@@ -207,6 +207,7 @@ export class SessionMemoryService {
     const toolContext: ToolContext = {
       conversationId,
       memoryRoot,
+      userId,
     };
 
     logger.info(

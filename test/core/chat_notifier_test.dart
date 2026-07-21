@@ -736,12 +736,14 @@ void main() {
 
       // 模拟 SSE 流推送内容块
       streamController.add(const StreamChunk(content: '你'));
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+      // 等待 50ms UI 节流定时器触发同步
+      await Future<void>.delayed(const Duration(milliseconds: 60));
 
       expect(getState().streamingContent, contains('你'));
 
       streamController.add(const StreamChunk(content: '好'));
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+      // 等待 50ms UI 节流定时器触发同步
+      await Future<void>.delayed(const Duration(milliseconds: 60));
 
       expect(getState().streamingContent, contains('你好'));
 
@@ -760,7 +762,8 @@ void main() {
 
       // 模拟推理内容流
       streamController.add(const StreamChunk(reasoningContent: '让我想想'));
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+      // 等待 50ms UI 节流定时器触发同步
+      await Future<void>.delayed(const Duration(milliseconds: 60));
 
       expect(getState().streamingReasoningContent, contains('让我想想'));
 

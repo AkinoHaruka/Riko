@@ -210,11 +210,19 @@ export function buildUserMessages(messages: ChatMessage[], compactContext?: stri
   const nonCompactMessages = messages.filter((m) => {
     if (m.is_compact_summary) return false;
     return true;
-  }).map((m) => ({
-    ...m,
-    // 对用户消息进行安全处理：Unicode 清洗 + XML 标签转义
-    content: m.role === 'user' ? escapeUserContent(sanitizeUnicode(m.content)) : m.content,
-  }));
+  }).map((m) => {
+    // 仅保留 role/content/is_compact_summary 三个受支持字段。
+    // 显式剔除前端透传的 reasoning_content（DeepSeek 专属扩展）：
+    // 该字段对 Anthropic/Gemini/OpenAI 等非 DeepSeek Provider 是非法参数，会导致
+    // "Unrecognized request argument" 400 错误；DeepSeek 续流所需的 reasoning_content
+    // 由后端在 toolCallLoop 中从响应流重新累积注入，与前端历史无关，故此处剥离是安全的。
+    const clean: ChatMessage = {
+      role: m.role,
+      // 对用户消息进行安全处理：Unicode 清洗 + XML 标签转义
+      content: m.role === 'user' ? escapeUserContent(sanitizeUnicode(m.content)) : m.content,
+    };
+    return clean;
+  });
   if (compactContext && compactContext.trim()) {
     return [
       { role: 'user', content: `<compact-context>\n${compactContext.trim()}\n</compact-context>` },

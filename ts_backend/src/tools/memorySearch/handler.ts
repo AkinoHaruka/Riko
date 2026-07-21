@@ -19,9 +19,11 @@ export const memorySearchToolHandler: ToolHandler = {
     const type = args.type as string | undefined;
 
     // FTS5 全文搜索：覆盖数据库记忆 + 已索引的文件记忆
+    // userId 来自 ToolContext，用于按 user_id 过滤记忆（多用户隔离）；
+    // 单用户场景下 userId 可能为 undefined，ftsSearch 会跳过 user_id 过滤条件。
     const ftsResults = ftsSearch(query, {
       limit: 10,
-      userId: context.conversationId ? undefined : undefined, // TODO: 从 context 获取 userId
+      userId: context.userId,
       type,
     });
 

@@ -24,17 +24,22 @@ class ChatPopupMenuButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final hasAvatar = ref.watch(mainAgentAvatarProvider).valueOrNull != null;
-    return AppAnimations.scaleTap(
-      onTap: () => _showSpringMenu(context, hasAvatar),
-      child: Semantics(
-        label: '更多选项',
-        button: true,
-        child: const Padding(
-          padding: EdgeInsets.all(8.0),
-          child: FaIcon(
-            FontAwesomeIcons.ellipsis,
-            color: AppColors.textPrimary,
-            size: 18,
+    return AppAnimations.scaleIn(
+      curve: AppAnimations.spring,
+      duration: AppAnimations.normal,
+      child: AppAnimations.scaleTap(
+        scaleDown: 0.86,
+        onTap: () => _showSpringMenu(context, hasAvatar),
+        child: Semantics(
+          label: '更多选项',
+          button: true,
+          child: const OrbButton(
+            icon: FaIcon(
+              FontAwesomeIcons.ellipsis,
+              color: AppColors.textPrimary,
+              size: 18,
+            ),
+            tooltip: '更多',
           ),
         ),
       ),
@@ -57,12 +62,14 @@ class ChatPopupMenuButton extends ConsumerWidget {
       transitionDuration: disable ? Duration.zero : AppAnimations.normal,
       transitionBuilder: (context, animation, secondaryAnimation, child) {
         if (disable) return child;
-        final scaleAnim = Tween(begin: 0.85, end: 1.0).chain(
-          CurveTween(curve: AppAnimations.spring),
-        );
-        final fadeAnim = Tween(begin: 0.0, end: 1.0).chain(
-          CurveTween(curve: AppAnimations.easeOutExpo),
-        );
+        final scaleAnim = Tween(
+          begin: 0.85,
+          end: 1.0,
+        ).chain(CurveTween(curve: AppAnimations.spring));
+        final fadeAnim = Tween(
+          begin: 0.0,
+          end: 1.0,
+        ).chain(CurveTween(curve: AppAnimations.easeOutExpo));
         return ScaleTransition(
           scale: animation.drive(scaleAnim),
           child: FadeTransition(
@@ -181,6 +188,51 @@ class ChatPopupMenuButton extends ConsumerWidget {
         },
       ),
     ];
+  }
+}
+
+/// 悬浮圆形操作按钮 — 统一返回/更多按钮的视觉与尺寸
+class OrbButton extends StatelessWidget {
+  /// 图标组件
+  final Widget icon;
+
+  /// 悬停提示
+  final String? tooltip;
+
+  /// 按钮直径
+  final double size;
+
+  const OrbButton({
+    super.key,
+    required this.icon,
+    this.tooltip,
+    this.size = 40,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget orb = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppColors.bgElevated.withValues(alpha: 0.85),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Center(child: icon),
+    );
+
+    if (tooltip != null) {
+      orb = Tooltip(message: tooltip, child: orb);
+    }
+    return orb;
   }
 }
 

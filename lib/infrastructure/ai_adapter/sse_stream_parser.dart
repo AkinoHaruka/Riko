@@ -28,21 +28,36 @@ import 'ai_adapter.dart';
 /// - 解析 `finish_reason` 标记
 /// - 兼容 Flutter Web 端（避免 Utf8Decoder 作为 StreamTransformer 的类型问题）
 /// - 自动检测并兼容 Python 后端简化格式（含 type 字段）与原始 OpenAI 格式
+/// - **跨块 UTF-8 安全**：复用持久化的 [Utf8Decoder] sink 累积解码，
+///   多字节汉字被 TCP 块边界劈开时不会产生 U+FFFD 乱码
 Stream<StreamChunk> parseSseStream(
   Stream<List<int>> byteStream, {
   void Function(String rawLine)? onRawSseLine,
 }) async* {
-  // 手动逐块解码字节流，避免 Utf8Decoder 在 Web 端作为 StreamTransformer 的类型兼容问题
-  String buffer = '';
+  // 持久化解码 sink：维护跨块的多字节字符状态，避免每块独立 decode 产生乱码。
+  // 通过 startChunkedConversion 获得 ByteConversionSink，每次 add 时同步将
+  // 解码后的字符串追加到 utf8Buffer；未完成的多字节序列会保留在内部状态中。
+  final utf8Buffer = StringBuffer();
+  final decoder = const Utf8Decoder(allowMalformed: true)
+      .startChunkedConversion(StringConversionSink.fromStringSink(utf8Buffer));
+
+  // 行缓冲区：累积解码后的字符串，按 '\n' 分割出完整行
+  String lineBuffer = '';
 
   await for (final chunk in byteStream) {
-    buffer += utf8.decode(chunk, allowMalformed: true);
+    decoder.add(chunk);
+    // 将本次新增的解码内容追加到行缓冲区，然后清空 utf8Buffer
+    //（内部未完成的字节会保留在 decoder 状态中，不会丢失）
+    if (utf8Buffer.isNotEmpty) {
+      lineBuffer += utf8Buffer.toString();
+      utf8Buffer.clear();
+    }
 
     // 按换行符分割处理完整行
-    while (buffer.contains('\n')) {
-      final newlineIndex = buffer.indexOf('\n');
-      final line = buffer.substring(0, newlineIndex);
-      buffer = buffer.substring(newlineIndex + 1);
+    while (lineBuffer.contains('\n')) {
+      final newlineIndex = lineBuffer.indexOf('\n');
+      final line = lineBuffer.substring(0, newlineIndex);
+      lineBuffer = lineBuffer.substring(newlineIndex + 1);
 
       // 先调用原始文本回调（输出未经解析的原始 SSE 行）
       if (onRawSseLine != null) {
@@ -53,12 +68,19 @@ Stream<StreamChunk> parseSseStream(
     }
   }
 
+  // 流结束：刷新解码器，处理可能残留的字节
+  decoder.close();
+  if (utf8Buffer.isNotEmpty) {
+    lineBuffer += utf8Buffer.toString();
+    utf8Buffer.clear();
+  }
+
   // 处理缓冲区中剩余的不完整行（服务器未以换行符结尾的情况）
-  if (buffer.trim().isNotEmpty) {
+  if (lineBuffer.trim().isNotEmpty) {
     if (onRawSseLine != null) {
-      onRawSseLine(buffer);
+      onRawSseLine(lineBuffer);
     }
-    yield* _parseLine(buffer);
+    yield* _parseLine(lineBuffer);
   }
 }
 
@@ -154,8 +176,15 @@ Stream<StreamChunk> _parseSimplifiedFormat(Map<String, dynamic> json) {
 
     case 'error':
       final errorContent = json['content'] as String? ?? '未知错误';
-      // 将错误作为 content 返回并标记结束，由上层决定如何展示
-      return Stream.value(StreamChunk(content: errorContent, isFinished: true));
+      // 标记 isError=true 让 ChatNotifier 将其映射为 ErrorInfo 写入 state.error，
+      // 而非作为 AI 回复内容持久化到消息列表
+      return Stream.value(
+        StreamChunk(
+          content: errorContent,
+          isFinished: true,
+          isError: true,
+        ),
+      );
 
     case 'tool_call':
       final data = json['data'] as Map<String, dynamic>?;

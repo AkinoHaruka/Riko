@@ -49,7 +49,13 @@ class ProotRunner {
   /// 通过 MethodChannel 在 proot 内启动 Node.js 后端（仅 Android）
   ///
   /// 桌面平台直接返回 true（后端由外部启动）。
-  /// 若 MethodChannel 不可用（如调试模式未注册插件），返回 false。
+  /// 失败场景：
+  /// - [MissingPluginException]：MethodChannel 未注册（如调试模式未加载插件）
+  /// - [PlatformException]：原生层启动失败（如 proot 二进制缺失、rootfs 损坏、
+  ///   Node.js 未安装、端口占用等），通过 `code`/`message` 提供详细原因
+  /// - 其他异常：未预期的运行时错误
+  ///
+  /// 失败时返回 false，调用方应记录日志并提供降级 UI（如提示用户重试或检查环境）。
   static Future<bool> start() async {
     if (_started) return true;
     if (!isMobilePlatform) {
@@ -64,16 +70,36 @@ class ProotRunner {
       debugPrint('警告：MethodChannel 不可用，后端启动失败');
       _started = false;
       return false;
+    } on PlatformException catch (e) {
+      // 原生层显式返回错误：proot 二进制缺失、rootfs 损坏、Node.js 未安装等
+      debugPrint(
+        '后端启动失败（PlatformException）: code=${e.code}, '
+        'message=${e.message}, details=${e.details}',
+      );
+      _started = false;
+      return false;
+    } catch (e) {
+      // 兜底捕获未预期异常，避免阻塞应用启动
+      debugPrint('后端启动失败（未知异常）: $e');
+      _started = false;
+      return false;
     }
   }
 
   /// 通过 MethodChannel 停止后端进程
+  ///
+  /// 异常处理与 [start] 一致，失败时静默降级（仅记录日志），
+  /// 避免停止失败导致应用无法退出。
   static Future<void> stop() async {
     if (!_started) return;
     try {
       await _channel.invokeMethod('stopBackend');
     } on MissingPluginException {
       // 插件未注册时静默忽略
+    } on PlatformException catch (e) {
+      debugPrint('后端停止失败（PlatformException）: code=${e.code}, message=${e.message}');
+    } catch (e) {
+      debugPrint('后端停止失败（未知异常）: $e');
     }
     _started = false;
   }
@@ -81,6 +107,7 @@ class ProotRunner {
   /// 检查后端进程是否正在运行（实时查询 MethodChannel）
   ///
   /// 移动平台通过原生层查询实际进程状态，桌面平台根据本地缓存返回。
+  /// 查询失败时返回 false（保守降级，避免误判为运行中）。
   static Future<bool> isRunning() async {
     if (!isMobilePlatform) return _started;
     try {
@@ -90,12 +117,19 @@ class ProotRunner {
       return running;
     } on MissingPluginException {
       return false;
+    } on PlatformException catch (e) {
+      debugPrint('后端状态查询失败（PlatformException）: code=${e.code}, message=${e.message}');
+      return false;
+    } catch (e) {
+      debugPrint('后端状态查询失败（未知异常）: $e');
+      return false;
     }
   }
 
   /// 在 proot 环境内执行命令并返回输出
   ///
   /// [command] 要执行的 shell 命令字符串
+  /// 失败时返回空字符串，调用方需检查返回值或自行处理。
   static Future<String> execCommand(String command) async {
     try {
       return await _channel.invokeMethod<String>('runInProot', {
@@ -104,12 +138,19 @@ class ProotRunner {
           '';
     } on MissingPluginException {
       return '';
+    } on PlatformException catch (e) {
+      debugPrint('proot 命令执行失败（PlatformException）: code=${e.code}, command=$command');
+      return '';
+    } catch (e) {
+      debugPrint('proot 命令执行失败（未知异常）: $e');
+      return '';
     }
   }
 
   /// 从原生侧获取引导状态信息
   ///
-  /// 返回包含 `complete` 等字段的 Map，表示引导流程是否已完成
+  /// 返回包含 `complete` 等字段的 Map，表示引导流程是否已完成。
+  /// 查询失败时返回 `{'complete': false}`，调用方应据此提示用户重新初始化。
   static Future<Map<String, dynamic>> getBootstrapStatus() async {
     try {
       final result = await _channel.invokeMapMethod<String, dynamic>(
@@ -117,6 +158,12 @@ class ProotRunner {
       );
       return Map<String, dynamic>.from(result ?? {});
     } on MissingPluginException {
+      return {'complete': false};
+    } on PlatformException catch (e) {
+      debugPrint('引导状态查询失败（PlatformException）: code=${e.code}, message=${e.message}');
+      return {'complete': false};
+    } catch (e) {
+      debugPrint('引导状态查询失败（未知异常）: $e');
       return {'complete': false};
     }
   }

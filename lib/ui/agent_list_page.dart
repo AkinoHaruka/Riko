@@ -149,6 +149,9 @@ class _AgentListPageState extends ConsumerState<AgentListPage> {
             const MemoryFileBrowser(),
             if (_settingsLoaded)
               Navigator(
+                // SettingsPage 是 deferred 类，无法用 const MaterialPage，
+                // 导致整个 pages 列表也无法声明为 const
+                // ignore: prefer_const_literals_to_create_immutables
                 pages: [
                   // ignore: prefer_const_constructors — SettingsPage 是 deferred 类，不能用 const
                   MaterialPage(
